@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dirt Cohesion Lab</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="sim-pane" aria-label="Simulation">
+        <div class="toolbar">
+          <div class="brand">
+            <span class="mark"></span>
+            <div>
+              <h1>Dirt Cohesion Lab</h1>
+              <p id="stats">0 particles</p>
+            </div>
+          </div>
+          <div class="transport" aria-label="Simulation controls">
+            <button id="playPause" class="primary" type="button">Pause</button>
+            <button id="step" type="button">Step</button>
+            <button id="seed" type="button">Seed</button>
+            <button id="clear" type="button">Clear</button>
+          </div>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas id="sim" width="960" height="640" aria-label="Particle simulation canvas"></canvas>
+        </div>
+      </section>
+
+      <aside class="controls" aria-label="Controls">
+        <section class="control-section">
+          <h2>Brush</h2>
+          <div class="segmented" role="group" aria-label="Paint mode">
+            <button class="mode is-active" data-tool="packed" type="button">Packed</button>
+            <button class="mode" data-tool="loose" type="button">Loose</button>
+            <button class="mode" data-tool="erase" type="button">Erase</button>
+          </div>
+          <label class="range-row">
+            <span>Brush size</span>
+            <strong id="brushSizeValue">6</strong>
+            <input id="brushSize" type="range" min="1" max="28" step="1" value="6" />
+          </label>
+        </section>
+
+        <section class="control-section">
+          <h2>Material</h2>
+          <label class="range-row">
+            <span>Cohesion</span>
+            <strong id="cohesionValue">80</strong>
+            <input id="cohesion" type="range" min="4" max="160" step="1" value="80" />
+          </label>
+          <label class="range-row">
+            <span>Fatigue</span>
+            <strong id="fatigueValue">0.8</strong>
+            <input id="fatigue" type="range" min="0.02" max="1.6" step="0.02" value="0.8" />
+          </label>
+          <label class="range-row">
+            <span>Particle weight</span>
+            <strong id="weightValue">1.0</strong>
+            <input id="weight" type="range" min="0.2" max="3" step="0.1" value="1" />
+          </label>
+          <label class="range-row">
+            <span>Bridge penalty</span>
+            <strong id="bridgePenaltyValue">0.4</strong>
+            <input id="bridgePenalty" type="range" min="0" max="4" step="0.1" value="0.4" />
+          </label>
+        </section>
+
+        <section class="control-section">
+          <h2>Loose Dirt</h2>
+          <label class="range-row">
+            <span>Settle ticks</span>
+            <strong id="settleTicksValue">5</strong>
+            <input id="settleTicks" type="range" min="1" max="90" step="1" value="5" />
+          </label>
+          <label class="range-row">
+            <span>Spread</span>
+            <strong id="spreadValue">0</strong>
+            <input id="spread" type="range" min="0" max="1" step="0.01" value="0" />
+          </label>
+          <label class="range-row">
+            <span>Rest jitter</span>
+            <strong id="jitterValue">0.1</strong>
+            <input id="jitter" type="range" min="0" max="0.5" step="0.01" value="0.1" />
+          </label>
+        </section>
+
+        <section class="control-section">
+          <h2>Simulation</h2>
+          <label class="range-row">
+            <span>Speed</span>
+            <strong id="speedValue">1</strong>
+            <input id="speed" type="range" min="1" max="12" step="1" value="1" />
+          </label>
+          <label class="range-row">
+            <span>Grid width</span>
+            <strong id="gridWidthValue">160</strong>
+            <input id="gridWidth" type="range" min="80" max="240" step="8" value="160" />
+          </label>
+          <label class="range-row">
+            <span>Grid height</span>
+            <strong id="gridHeightValue">104</strong>
+            <input id="gridHeight" type="range" min="56" max="160" step="8" value="104" />
+          </label>
+          <button id="resize" class="wide" type="button">Apply Grid</button>
+          <label class="toggle-row">
+            <span>Stress view</span>
+            <input id="stressView" type="checkbox" checked />
+          </label>
+          <label class="toggle-row">
+            <span>Unified dirt color</span>
+            <input id="unifiedColor" type="checkbox" />
+          </label>
+        </section>
+      </aside>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
