@@ -19,9 +19,10 @@
           </div>
           <div class="transport" aria-label="Simulation controls">
             <button id="playPause" class="primary" type="button">Pause</button>
-            <button id="step" type="button">Step</button>
-            <button id="seed" type="button">Seed</button>
-            <button id="clear" type="button">Clear</button>
+          <button id="step" type="button">Step</button>
+          <button id="seed" type="button">Seed</button>
+          <button id="clear" type="button">Clear</button>
+          <button id="resetVehicle" type="button">Vehicle</button>
           </div>
         </div>
 
@@ -37,6 +38,10 @@
             <button class="mode is-active" data-tool="packed" type="button">Packed</button>
             <button class="mode" data-tool="loose" type="button">Loose</button>
             <button class="mode" data-tool="erase" type="button">Erase</button>
+          </div>
+          <div class="segmented brush-shape" role="group" aria-label="Brush shape">
+            <button class="shape is-active" data-brush-shape="circle" type="button">Circle</button>
+            <button class="shape" data-brush-shape="square" type="button">Square</button>
           </div>
           <label class="range-row">
             <span>Brush size</span>
@@ -77,12 +82,12 @@
             <input id="settleTicks" type="range" min="1" max="90" step="1" value="5" />
           </label>
           <label class="range-row">
-            <span>Spread</span>
+            <span>Slide drift</span>
             <strong id="spreadValue">0</strong>
             <input id="spread" type="range" min="0" max="1" step="0.01" value="0" />
           </label>
           <label class="range-row">
-            <span>Rest jitter</span>
+            <span>Loose friction</span>
             <strong id="jitterValue">0.1</strong>
             <input id="jitter" type="range" min="0" max="0.5" step="0.01" value="0.1" />
           </label>
@@ -111,6 +116,14 @@
             <input id="stressView" type="checkbox" checked />
           </label>
           <label class="toggle-row">
+            <span>Damage view</span>
+            <input id="damageView" type="checkbox" />
+          </label>
+          <label class="toggle-row">
+            <span>Packed contours</span>
+            <input id="contourView" type="checkbox" checked />
+          </label>
+          <label class="toggle-row">
             <span>Unified dirt color</span>
             <input id="unifiedColor" type="checkbox" />
           </label>
@@ -118,6 +131,6 @@
       </aside>
     </main>
 
-    <script src="app.js"></script>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>

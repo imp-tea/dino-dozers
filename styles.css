@@ -144,6 +144,9 @@ h2 {
 }
 
 .canvas-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: calc(100vh - 112px);
   min-height: 460px;
   overflow: hidden;
@@ -190,7 +193,13 @@ canvas {
   gap: 6px;
 }
 
-.mode {
+.brush-shape {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 8px;
+}
+
+.mode,
+.shape {
   min-width: 0;
   padding: 0 8px;
 }
