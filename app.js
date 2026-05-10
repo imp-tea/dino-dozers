@@ -14,14 +14,29 @@ const CONTOUR_ADAPTIVE_MIN_POINTS = 5;
 const CONTOUR_CORNER_CONNECTOR_LENGTH = 1;
 const CONTOUR_CORNER_CONNECTOR_MAX_ANGLE = Math.PI / 3;
 const PHYSICS_STEP_SECONDS = 1 / 60;
-const VEHICLE_MOTOR_SPEED = 18;
-const VEHICLE_MOTOR_TORQUE = 2400;
+const DIRT_STEP_SECONDS = 1 / 30;
+const DIRT_MAX_FRAME_SLICES = 3;
+const VEHICLE_MOTOR_SPEED = 24;
+const VEHICLE_MOTOR_TORQUE = 5200;
 const VEHICLE_WHEEL_RADIUS = 2.4;
 const VEHICLE_WHEEL_Y_OFFSET = 2.9;
-const VEHICLE_TIRE_FRICTION = 6;
+const VEHICLE_TIRE_FRICTION = 11;
 const VEHICLE_FLIP_UPWARD_IMPULSE = 430;
 const VEHICLE_FLIP_SIDE_IMPULSE = 90;
 const VEHICLE_FLIP_ANGULAR_IMPULSE = 520;
+const VEHICLE_CHASSIS_HALF_WIDTH = 5.8;
+const VEHICLE_CHASSIS_HALF_HEIGHT = 1.15;
+const VEHICLE_CHASSIS_DENSITY = 0.9;
+const VEHICLE_WHEEL_DENSITY = 1.8;
+const VEHICLE_SUSPENSION_FREQUENCY = 6.5;
+const VEHICLE_SUSPENSION_DAMPING = 0.9;
+const VEHICLE_BODY_CHASSIS = 1;
+const VEHICLE_BODY_LEFT_WHEEL = 2;
+const VEHICLE_BODY_RIGHT_WHEEL = 3;
+const VEHICLE_LOAD_SCALE = 0.18;
+const VEHICLE_BREAK_SPEED = 6;
+const VEHICLE_BREAK_DAMAGE = 0.0225;
+const VEHICLE_LOOSE_KICK = 0.45;
 const PACKED_CONTOUR_FILL = "#76533a";
 const PACKED_CONTOUR_STROKE = "#3f2518";
 
@@ -52,6 +67,7 @@ let isPackedContourCacheDirty = true;
 let isPhysicsTerrainDirty = true;
 let packedContours = [];
 let physicsAccumulator = 0;
+let dirtAccumulator = 0;
 let physicsTerrainBody = null;
 let physicsChassisBody = null;
 let physicsLeftWheelBody = null;
@@ -74,6 +90,14 @@ const state = {
   damage: null,
   stress: null,
   visualStress: null,
+  visualX: null,
+  visualY: null,
+  rigid: null,
+  rigidBody: null,
+  rigidVx: null,
+  rigidVy: null,
+  rigidMass: null,
+  externalLoad: null,
   vx: null,
   vy: null,
   touched: null,
@@ -114,11 +138,35 @@ function resizeGrid(width, height) {
   state.damage = new Float32Array(total);
   state.stress = new Float32Array(total);
   state.visualStress = new Float32Array(total);
+  state.visualX = new Float32Array(total);
+  state.visualY = new Float32Array(total);
+  state.rigid = new Uint8Array(total);
+  state.rigidBody = new Int16Array(total);
+  state.rigidVx = new Float32Array(total);
+  state.rigidVy = new Float32Array(total);
+  state.rigidMass = new Float32Array(total);
+  state.externalLoad = new Float32Array(total);
   state.vx = new Int16Array(total);
   state.vy = new Int16Array(total);
   state.touched = new Uint32Array(total);
   state.tick = 0;
   seedWorld();
+}
+
+function resetCellVisualPosition(i) {
+  state.visualX[i] = i % state.width;
+  state.visualY[i] = Math.floor(i / state.width);
+}
+
+function settleDirtVisualPositions() {
+  const total = state.width * state.height;
+  for (let i = 0; i < total; i++) resetCellVisualPosition(i);
+}
+
+function dirtTweenProgress() {
+  if (!state.running) return 1;
+  const t = Math.max(0, Math.min(1, dirtAccumulator / DIRT_STEP_SECONDS));
+  return t * t * (3 - 2 * t);
 }
 
 function index(x, y) {
@@ -127,6 +175,14 @@ function index(x, y) {
 
 function inBounds(x, y) {
   return x >= 0 && x < state.width && y >= 0 && y < state.height;
+}
+
+function isEmptyForDirt(i) {
+  return state.cells[i] === EMPTY && state.rigid[i] === 0;
+}
+
+function isSolidForDirt(i) {
+  return state.cells[i] !== EMPTY || state.rigid[i] !== 0;
 }
 
 function swapCells(a, b) {
@@ -146,6 +202,12 @@ function swapCells(a, b) {
   const visualStress = state.visualStress[a];
   state.visualStress[a] = state.visualStress[b];
   state.visualStress[b] = visualStress;
+  const visualX = state.visualX[a];
+  state.visualX[a] = state.visualX[b];
+  state.visualX[b] = visualX;
+  const visualY = state.visualY[a];
+  state.visualY[a] = state.visualY[b];
+  state.visualY[b] = visualY;
   const vx = state.vx[a];
   state.vx[a] = state.vx[b];
   state.vx[b] = vx;
@@ -168,6 +230,7 @@ function clearCell(i) {
   state.vx[i] = 0;
   state.vy[i] = 0;
   state.touched[i] = 0;
+  resetCellVisualPosition(i);
   if (wasPacked) markPackedTerrainDirty();
 }
 
@@ -181,6 +244,7 @@ function setCell(i, kind) {
   state.vx[i] = 0;
   state.vy[i] = 0;
   state.touched[i] = 0;
+  resetCellVisualPosition(i);
   if (wasPacked || kind === PACKED) markPackedTerrainDirty();
 }
 
@@ -191,55 +255,165 @@ function markPackedTerrainDirty() {
 
 function seedWorld() {
   markPackedTerrainDirty();
+  dirtAccumulator = 0;
   state.cells.fill(EMPTY);
   state.ages.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
+  settleDirtVisualPositions();
+  state.rigid.fill(0);
+  state.rigidBody.fill(0);
+  state.rigidVx.fill(0);
+  state.rigidVy.fill(0);
+  state.rigidMass.fill(0);
+  state.externalLoad.fill(0);
   state.vx.fill(0);
   state.vy.fill(0);
   state.touched.fill(0);
 
   const w = state.width;
   const h = state.height;
-  const floor = Math.floor(h * 0.78);
+  const floor = Math.floor(h * 2 / 3);
 
   for (let y = floor; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      if (Math.random() > 0.05) setCell(index(x, y), PACKED);
+      setCell(index(x, y), PACKED);
     }
-  }
-
-  const archLeft = Math.floor(w * 0.2);
-  const archRight = Math.floor(w * 0.8);
-  const archTop = Math.floor(h * 0.34);
-  const archBottom = Math.floor(h * 0.78);
-
-  for (let y = archTop; y < archBottom; y++) {
-    for (let x = archLeft; x < archRight; x++) {
-      const normalized = (x - archLeft) / (archRight - archLeft);
-      const curve = Math.sin(normalized * Math.PI);
-      const roof = archBottom - Math.floor(curve * h * 0.27);
-      const thickness = 5 + Math.floor(curve * 5);
-      const wall =
-        x < archLeft + 7 ||
-        x > archRight - 8 ||
-        (y >= roof && y <= roof + thickness);
-      if (wall && Math.random() > 0.04) setCell(index(x, y), PACKED);
-    }
-  }
-
-  for (let n = 0; n < Math.floor(w * h * 0.03); n++) {
-    const x = Math.floor(w * 0.38 + Math.random() * w * 0.24);
-    const y = Math.floor(h * 0.03 + Math.random() * h * 0.18);
-    setCell(index(x, y), LOOSE);
   }
 }
 
 function simulationStep() {
   state.tick++;
+  updateVehicleGridInfluence();
   updateLoose();
   analyzePackedClusters();
+}
+
+function updateVehicleGridInfluence() {
+  state.rigid.fill(0);
+  state.rigidBody.fill(0);
+  state.rigidVx.fill(0);
+  state.rigidVy.fill(0);
+  state.rigidMass.fill(0);
+  state.externalLoad.fill(0);
+
+  rasterizeVehicleBox(
+    physicsChassisBody,
+    VEHICLE_CHASSIS_HALF_WIDTH,
+    VEHICLE_CHASSIS_HALF_HEIGHT,
+    VEHICLE_BODY_CHASSIS,
+  );
+  rasterizeVehicleCircle(physicsLeftWheelBody, VEHICLE_WHEEL_RADIUS, VEHICLE_BODY_LEFT_WHEEL);
+  rasterizeVehicleCircle(physicsRightWheelBody, VEHICLE_WHEEL_RADIUS, VEHICLE_BODY_RIGHT_WHEEL);
+  applyVehicleTerrainEffects();
+}
+
+function rasterizeVehicleBox(body, halfWidth, halfHeight, bodyId) {
+  if (!body) return;
+
+  const position = body.getPosition();
+  const angle = body.getAngle();
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const radius = Math.hypot(halfWidth, halfHeight) + 1;
+  const minX = Math.max(0, Math.floor(position.x - radius));
+  const maxX = Math.min(state.width - 1, Math.ceil(position.x + radius));
+  const minY = Math.max(0, Math.floor(position.y - radius));
+  const maxY = Math.min(state.height - 1, Math.ceil(position.y + radius));
+  const area = Math.max(1, halfWidth * 2 * halfHeight * 2);
+  const cellMass = body.getMass() / area;
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const centerX = x + 0.5 - position.x;
+      const centerY = y + 0.5 - position.y;
+      const localX = centerX * cos + centerY * sin;
+      const localY = -centerX * sin + centerY * cos;
+      if (Math.abs(localX) > halfWidth || Math.abs(localY) > halfHeight) continue;
+      markVehicleCell(x, y, body, bodyId, cellMass);
+    }
+  }
+}
+
+function rasterizeVehicleCircle(body, radius, bodyId) {
+  if (!body) return;
+
+  const position = body.getPosition();
+  const minX = Math.max(0, Math.floor(position.x - radius - 1));
+  const maxX = Math.min(state.width - 1, Math.ceil(position.x + radius + 1));
+  const minY = Math.max(0, Math.floor(position.y - radius - 1));
+  const maxY = Math.min(state.height - 1, Math.ceil(position.y + radius + 1));
+  const radiusSq = radius * radius;
+  const area = Math.max(1, Math.PI * radiusSq);
+  const cellMass = body.getMass() / area;
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const dx = x + 0.5 - position.x;
+      const dy = y + 0.5 - position.y;
+      if (dx * dx + dy * dy > radiusSq) continue;
+      markVehicleCell(x, y, body, bodyId, cellMass);
+    }
+  }
+}
+
+function markVehicleCell(x, y, body, bodyId, cellMass) {
+  const i = index(x, y);
+  const velocity = body.getLinearVelocityFromWorldPoint(Vec2(x + 0.5, y + 0.5));
+  const previousMass = state.rigidMass[i];
+  const nextMass = previousMass + cellMass;
+
+  state.rigid[i] = 1;
+  state.rigidBody[i] = bodyId;
+  state.rigidVx[i] = (state.rigidVx[i] * previousMass + velocity.x * cellMass) / nextMass;
+  state.rigidVy[i] = (state.rigidVy[i] * previousMass + velocity.y * cellMass) / nextMass;
+  state.rigidMass[i] = nextMass;
+}
+
+function applyVehicleTerrainEffects() {
+  const total = state.width * state.height;
+  for (let i = 0; i < total; i++) {
+    if (!state.rigid[i]) continue;
+
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    const speed = Math.hypot(state.rigidVx[i], state.rigidVy[i]);
+    const load = state.rigidMass[i] * VEHICLE_LOAD_SCALE;
+
+    if (y < state.height - 1) {
+      const below = index(x, y + 1);
+      if (state.cells[below] === PACKED) state.externalLoad[below] += load;
+    }
+
+    if (speed < VEHICLE_BREAK_SPEED) continue;
+    const impact = (speed - VEHICLE_BREAK_SPEED) * VEHICLE_BREAK_DAMAGE * Math.max(1, state.rigidMass[i]);
+    fracturePackedNearVehicle(x, y, impact, state.rigidVx[i], state.rigidVy[i]);
+  }
+}
+
+function fracturePackedNearVehicle(x, y, impact, vx, vy) {
+  const candidates = [
+    [x, y],
+    [x - 1, y],
+    [x + 1, y],
+    [x, y - 1],
+    [x, y + 1],
+  ];
+
+  for (const [nx, ny] of candidates) {
+    if (!inBounds(nx, ny)) continue;
+    const i = index(nx, ny);
+    if (state.cells[i] !== PACKED) continue;
+
+    state.damage[i] += impact;
+    if (state.damage[i] < 1 && impact < 0.35) continue;
+
+    setCell(i, LOOSE);
+    state.vx[i] = clampVelocity(vx * VEHICLE_LOOSE_KICK);
+    state.vy[i] = clampVelocity(Math.max(0, vy * VEHICLE_LOOSE_KICK));
+    state.touched[i] = state.tick;
+  }
 }
 
 function updateLoose() {
@@ -261,6 +435,8 @@ function updateLoose() {
 function updateLooseCell(start) {
   if (state.cells[start] !== LOOSE) return;
   state.touched[start] = state.tick;
+  if (state.rigid[start] && pushLooseOutOfVehicle(start) !== start) return;
+
   const previousX = start % state.width;
   const previousY = Math.floor(start / state.width);
   const hadVerticalVelocity = state.vy[start] !== 0;
@@ -289,6 +465,7 @@ function updateLooseCell(start) {
       current >= 0 &&
       state.cells[current] === LOOSE &&
       !isNeedleTop(current) &&
+      canLooseCellPack(current) &&
       shouldPackAgainstStableColumn(current)
     ) {
       setCell(current, PACKED);
@@ -318,7 +495,7 @@ function updateLooseCell(start) {
     state.ages[current] = 0;
   } else if (isResting) {
     state.ages[current]++;
-    if (state.ages[current] >= controls.settleTicks.value) setCell(current, PACKED);
+    if (state.ages[current] >= controls.settleTicks.value && canLooseCellPack(current)) setCell(current, PACKED);
   } else {
     state.ages[current] = 0;
   }
@@ -331,6 +508,8 @@ function moveLoose(from, to) {
   state.damage[to] = state.damage[from];
   state.stress[to] = state.stress[from];
   state.visualStress[to] = state.visualStress[from];
+  state.visualX[to] = state.visualX[from];
+  state.visualY[to] = state.visualY[from];
   state.vx[to] = state.vx[from];
   state.vy[to] = state.vy[from];
   state.touched[to] = state.tick;
@@ -390,6 +569,45 @@ function exchangeMomentum(a, b, axis) {
   }
 }
 
+function collideLooseWithVehicle(i, vehicleCell, axis) {
+  const vehicleVelocity = axis === "x" ? state.rigidVx[vehicleCell] : state.rigidVy[vehicleCell];
+  const kick = quantizeVelocity(vehicleVelocity * 0.35);
+
+  if (axis === "x") {
+    state.vx[i] = kick;
+    state.vy[i] = reduceTowardZero(state.vy[i]);
+  } else {
+    state.vy[i] = Math.min(0, kick);
+    state.vx[i] = quantizeVelocity(state.rigidVx[vehicleCell] * 0.25);
+  }
+}
+
+function pushLooseOutOfVehicle(i) {
+  const x = i % state.width;
+  const y = Math.floor(i / state.width);
+  const preferredY = state.rigidVy[i] > 0 ? -1 : 1;
+  const candidates = [
+    [x, y + preferredY],
+    [x - 1, y],
+    [x + 1, y],
+    [x, y - preferredY],
+    [x - 1, y + preferredY],
+    [x + 1, y + preferredY],
+  ];
+
+  for (const [nx, ny] of candidates) {
+    if (!inBounds(nx, ny)) continue;
+    const target = index(nx, ny);
+    if (!isEmptyForDirt(target)) continue;
+    const moved = moveLoose(i, target);
+    state.vx[moved] = quantizeVelocity(state.rigidVx[i] * 0.4);
+    state.vy[moved] = quantizeVelocity(state.rigidVy[i] * 0.4);
+    return moved;
+  }
+
+  return i;
+}
+
 function attemptAxisMove(start, axis, allowCollisionSideStep) {
   const velocity = axis === "x" ? state.vx[start] : state.vy[start];
   if (velocity === 0 || state.cells[start] !== LOOSE) return start;
@@ -415,7 +633,7 @@ function attemptAxisMove(start, axis, allowCollisionSideStep) {
     }
 
     const target = index(nx, ny);
-    if (state.cells[target] !== EMPTY) {
+    if (!isEmptyForDirt(target)) {
       let current = start;
       if (open !== start) current = moveLoose(start, open);
 
@@ -428,6 +646,7 @@ function attemptAxisMove(start, axis, allowCollisionSideStep) {
           allowCollisionSideStep &&
           !didSlide &&
           !isNeedleTop(current) &&
+          canLooseCellPack(current) &&
           shouldPackAgainstStableColumn(current)
         ) {
           setCell(current, PACKED);
@@ -436,14 +655,15 @@ function attemptAxisMove(start, axis, allowCollisionSideStep) {
         return current;
       }
 
-      exchangeMomentum(current, target, axis);
+      if (state.rigid[target]) collideLooseWithVehicle(current, target, axis);
+      else exchangeMomentum(current, target, axis);
 
       if (axis === "y" && direction > 0) {
         state.vy[current] = 0;
         const slid = allowCollisionSideStep ? tryDiagonalFall(current) : current;
         const didSlide = slid >= 0 && slid !== current;
         if (slid >= 0) current = slid;
-        if (!didSlide && !isNeedleTop(current) && shouldPackAgainstStableColumn(current)) {
+        if (!didSlide && !isNeedleTop(current) && canLooseCellPack(current) && shouldPackAgainstStableColumn(current)) {
           setCell(current, PACKED);
           return -1;
         }
@@ -469,7 +689,7 @@ function attemptAxisMove(start, axis, allowCollisionSideStep) {
 function hasSupport(i) {
   const x = i % state.width;
   const y = Math.floor(i / state.width);
-  return y === state.height - 1 || state.cells[index(x, y + 1)] !== EMPTY;
+  return y === state.height - 1 || isSolidForDirt(index(x, y + 1));
 }
 
 function hasDirectPackedColumnToGround(i) {
@@ -480,6 +700,25 @@ function hasDirectPackedColumnToGround(i) {
     if (state.cells[index(x, yy)] !== PACKED) return false;
   }
   return true;
+}
+
+function hasPackedNeighbor(i) {
+  const x = i % state.width;
+  const y = Math.floor(i / state.width);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (state.cells[index(nx, ny)] === PACKED) return true;
+    }
+  }
+  return false;
+}
+
+function canLooseCellPack(i) {
+  return state.cells[i] === LOOSE && hasPackedNeighbor(i);
 }
 
 function shouldPackAgainstStableColumn(i) {
@@ -502,7 +741,7 @@ function tryDiagonalFall(i) {
     const ny = y + 1;
     if (!inBounds(nx, ny)) continue;
     const target = index(nx, ny);
-    if (state.cells[target] !== EMPTY) continue;
+    if (!isEmptyForDirt(target)) continue;
     const moved = moveLoose(i, target);
     state.vy[moved] = 0;
     if (Math.random() < controls.spread.value) state.vx[moved] = clampVelocity(state.vx[moved] + direction);
@@ -532,7 +771,7 @@ function tryColumnSlump(i) {
     const nx = x + direction;
     if (!inBounds(nx, y)) continue;
     const target = index(nx, y);
-    if (state.cells[target] !== EMPTY) continue;
+    if (!isEmptyForDirt(target)) continue;
     const moved = moveLoose(i, target);
     state.vx[moved] = direction;
     state.ages[moved] = 0;
@@ -548,12 +787,12 @@ function isNeedleTop(i) {
   const y = Math.floor(i / state.width);
   if (y >= state.height - 1) return false;
 
-  const leftEmpty = inBounds(x - 1, y) && state.cells[index(x - 1, y)] === EMPTY;
-  const rightEmpty = inBounds(x + 1, y) && state.cells[index(x + 1, y)] === EMPTY;
+  const leftEmpty = inBounds(x - 1, y) && isEmptyForDirt(index(x - 1, y));
+  const rightEmpty = inBounds(x + 1, y) && isEmptyForDirt(index(x + 1, y));
   if (!leftEmpty && !rightEmpty) return false;
 
-  const hasLeftShoulder = inBounds(x - 1, y + 1) && state.cells[index(x - 1, y + 1)] !== EMPTY;
-  const hasRightShoulder = inBounds(x + 1, y + 1) && state.cells[index(x + 1, y + 1)] !== EMPTY;
+  const hasLeftShoulder = inBounds(x - 1, y + 1) && isSolidForDirt(index(x - 1, y + 1));
+  const hasRightShoulder = inBounds(x + 1, y + 1) && isSolidForDirt(index(x + 1, y + 1));
   return !hasLeftShoulder || !hasRightShoulder;
 }
 
@@ -561,8 +800,11 @@ function applySlidingFriction(i) {
   if (state.vx[i] === 0 || !hasSupport(i)) return;
   const x = i % state.width;
   const y = Math.floor(i / state.width);
-  const below = y < state.height - 1 ? state.cells[index(x, y + 1)] : PACKED;
-  const friction = below === PACKED ? 2 : 1 + Math.round(controls.jitter.value * 4);
+  const below = y < state.height - 1 ? index(x, y + 1) : -1;
+  const friction =
+    below < 0 || state.cells[below] === PACKED || state.rigid[below]
+      ? 2
+      : 1 + Math.round(controls.jitter.value * 4);
   state.vx[i] = reduceTowardZero(state.vx[i], friction);
 }
 
@@ -603,12 +845,18 @@ function addPackedNeighbor(x, y, seen, queue) {
   queue.push(i);
 }
 
+function hasRigidSupport(i) {
+  const x = i % state.width;
+  const y = Math.floor(i / state.width);
+  return y < state.height - 1 && state.rigid[index(x, y + 1)] !== 0;
+}
+
 function processCluster(cluster) {
   let grounded = false;
   const h = state.height;
 
   for (const i of cluster) {
-    if (Math.floor(i / state.width) === h - 1) {
+    if (Math.floor(i / state.width) === h - 1 || hasRigidSupport(i)) {
       grounded = true;
       break;
     }
@@ -631,7 +879,7 @@ function computeSupportDistances(cluster) {
 
   for (const i of cluster) {
     const y = Math.floor(i / state.width);
-    if (y === state.height - 1) {
+    if (y === state.height - 1 || hasRigidSupport(i)) {
       distances[i] = 0;
       queue.push(i);
     }
@@ -675,7 +923,7 @@ function routeClusterLoad(cluster, distances) {
   const sorted = [...cluster].sort((a, b) => distances[b] - distances[a]);
 
   for (const i of sorted) {
-    loads[i] += controls.weight.value + looseOverburden(i);
+    loads[i] += controls.weight.value + looseOverburden(i) + state.externalLoad[i];
     parents[i] = bestSupportParent(i, distances);
     const bending = bendingPenalty(i, distances);
     const bearing = bearingPenalty(i);
@@ -743,7 +991,7 @@ function bendingPenalty(i, distances) {
   const x = i % state.width;
   const y = Math.floor(i / state.width);
   const below = inBounds(x, y + 1) ? state.cells[index(x, y + 1)] : EMPTY;
-  const hasVerticalSupport = below === PACKED || y === state.height - 1;
+  const hasVerticalSupport = below === PACKED || hasRigidSupport(i) || y === state.height - 1;
   if (hasVerticalSupport) return 0;
 
   const left = inBounds(x - 1, y) && state.cells[index(x - 1, y)] === PACKED;
@@ -773,6 +1021,7 @@ function supportRelief(i) {
   const x = i % state.width;
   const y = Math.floor(i / state.width);
   if (y === state.height - 1) return 9;
+  if (hasRigidSupport(i)) return 5;
 
   let relief = 1;
   const supports = [
@@ -785,7 +1034,8 @@ function supportRelief(i) {
 
   for (const [nx, ny, value] of supports) {
     if (!inBounds(nx, ny)) continue;
-    if (state.cells[index(nx, ny)] === PACKED) relief += value;
+    const support = index(nx, ny);
+    if (state.cells[support] === PACKED || state.rigid[support]) relief += value;
   }
 
   return relief;
@@ -817,6 +1067,7 @@ function render() {
   const showDamage = controls.damageView.checked;
   const showPackedContours = controls.contourView.checked;
   const threshold = controls.cohesion.value;
+  const dirtTween = dirtTweenProgress();
   updateVisualStress(showStress);
 
   drawPackedContourFill(cellW, cellH);
@@ -832,6 +1083,15 @@ function render() {
         ctx.fillStyle = controls.unifiedColor.checked
           ? colorPacked(x, y)
           : colorLoose(x, y);
+        const drawX = state.visualX[i] + (x - state.visualX[i]) * dirtTween;
+        const drawY = state.visualY[i] + (y - state.visualY[i]) * dirtTween;
+        ctx.fillRect(
+          drawX * cellW,
+          drawY * cellH,
+          Math.ceil(cellW),
+          Math.ceil(cellH),
+        );
+        continue;
       } else if (showDamage) {
         ctx.fillStyle = colorDamage(x, y, state.damage[i]);
       } else if (showStress) {
@@ -1412,9 +1672,11 @@ function destroyPhysicsBody(body) {
 }
 
 function vehicleStartPosition() {
+  const terrainTop = Math.floor(state.height * 2 / 3);
+  const vehicleClearance = VEHICLE_WHEEL_Y_OFFSET + VEHICLE_WHEEL_RADIUS + 2;
   return {
     x: Math.max(12, Math.min(state.width - 12, Math.floor(state.width * 0.4))),
-    y: Math.max(10, Math.min(state.height - 10, Math.floor(state.height * 0.6))),
+    y: Math.max(10, Math.min(state.height - 10, Math.floor(terrainTop - vehicleClearance))),
   };
 }
 
@@ -1430,11 +1692,11 @@ function resetPhysicsVehicle() {
   physicsChassisBody = physicsWorld.createDynamicBody({
     position: Vec2(start.x, start.y),
     angularDamping: 1.2,
-    linearDamping: 0.08,
+    linearDamping: 0.12,
   });
   physicsChassisBody.createFixture({
-    shape: Box(5.8, 1.15),
-    density: 0.65,
+    shape: Box(VEHICLE_CHASSIS_HALF_WIDTH, VEHICLE_CHASSIS_HALF_HEIGHT),
+    density: VEHICLE_CHASSIS_DENSITY,
     friction: 0.6,
     restitution: 0.05,
   });
@@ -1445,7 +1707,7 @@ function resetPhysicsVehicle() {
   });
   physicsLeftWheelBody.createFixture({
     shape: Circle(VEHICLE_WHEEL_RADIUS),
-    density: 1.35,
+    density: VEHICLE_WHEEL_DENSITY,
     friction: VEHICLE_TIRE_FRICTION,
     restitution: 0.02,
   });
@@ -1456,7 +1718,7 @@ function resetPhysicsVehicle() {
   });
   physicsRightWheelBody.createFixture({
     shape: Circle(VEHICLE_WHEEL_RADIUS),
-    density: 1.35,
+    density: VEHICLE_WHEEL_DENSITY,
     friction: VEHICLE_TIRE_FRICTION,
     restitution: 0.02,
   });
@@ -1465,8 +1727,8 @@ function resetPhysicsVehicle() {
     enableMotor: false,
     maxMotorTorque: VEHICLE_MOTOR_TORQUE,
     motorSpeed: 0,
-    frequencyHz: 4,
-    dampingRatio: 0.75,
+    frequencyHz: VEHICLE_SUSPENSION_FREQUENCY,
+    dampingRatio: VEHICLE_SUSPENSION_DAMPING,
   };
 
   physicsLeftWheelJoint = physicsWorld.createJoint(WheelJoint(
@@ -1603,7 +1865,7 @@ function drawPhysicsVehicle(cellW, cellH) {
   if (!physicsChassisBody || !physicsLeftWheelBody || !physicsRightWheelBody) return;
 
   ctx.save();
-  drawPhysicsBox(physicsChassisBody, 5.8, 1.15, "#d9563f", "#ffe0a3", cellW, cellH);
+  drawPhysicsBox(physicsChassisBody, VEHICLE_CHASSIS_HALF_WIDTH, VEHICLE_CHASSIS_HALF_HEIGHT, "#d9563f", "#ffe0a3", cellW, cellH);
   drawPhysicsWheel(physicsLeftWheelBody, VEHICLE_WHEEL_RADIUS, cellW, cellH);
   drawPhysicsWheel(physicsRightWheelBody, VEHICLE_WHEEL_RADIUS, cellW, cellH);
   ctx.restore();
@@ -1731,13 +1993,34 @@ function paintBrush(cx, cy) {
   }
 }
 
+function runDirtTicks(tickCount) {
+  if (tickCount <= 0) return;
+  settleDirtVisualPositions();
+  for (let n = 0; n < tickCount; n++) simulationStep();
+}
+
+function stepDirt(delta) {
+  if (!state.running) {
+    dirtAccumulator = DIRT_STEP_SECONDS;
+    return;
+  }
+
+  dirtAccumulator += delta / 1000;
+  let slices = 0;
+  while (dirtAccumulator >= DIRT_STEP_SECONDS && slices < DIRT_MAX_FRAME_SLICES) {
+    runDirtTicks(controls.speed.value);
+    dirtAccumulator -= DIRT_STEP_SECONDS;
+    slices++;
+  }
+
+  if (dirtAccumulator >= DIRT_STEP_SECONDS) dirtAccumulator = DIRT_STEP_SECONDS;
+}
+
 function frame(now = performance.now()) {
   const delta = Math.min(100, now - lastFrame);
   lastFrame = now;
 
-  if (state.running) {
-    for (let n = 0; n < controls.speed.value; n++) simulationStep();
-  }
+  stepDirt(delta);
   stepPhysics(delta);
   render();
   requestAnimationFrame(frame);
@@ -1749,7 +2032,8 @@ document.querySelector("#playPause").addEventListener("click", (event) => {
 });
 
 document.querySelector("#step").addEventListener("click", () => {
-  simulationStep();
+  runDirtTicks(1);
+  dirtAccumulator = 0;
   render();
 });
 
@@ -1764,10 +2048,18 @@ document.querySelector("#clear").addEventListener("click", () => {
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
+  settleDirtVisualPositions();
+  state.rigid.fill(0);
+  state.rigidBody.fill(0);
+  state.rigidVx.fill(0);
+  state.rigidVy.fill(0);
+  state.rigidMass.fill(0);
+  state.externalLoad.fill(0);
   state.vx.fill(0);
   state.vy.fill(0);
   state.touched.fill(0);
   state.tick = 0;
+  dirtAccumulator = 0;
   packedContours = [];
   markPackedTerrainDirty();
   resetPhysicsVehicle();
