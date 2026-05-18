@@ -5,6 +5,9 @@ import headTopSvg from "./assets/head_top.svg?raw";
 import jawBottomSvg from "./assets/jaw_bottom.svg?raw";
 import stickSvg from "./assets/stick.svg?raw";
 import tailSvg from "./assets/tail.svg?raw";
+import treadCoverSvg from "./assets/tread-cover.svg?raw";
+import treadLinkSvg from "./assets/tread-link.svg?raw";
+import wheelSvg from "./assets/wheel.svg?raw";
 
 const wreckersaurusSvgSources = {
   boom: boomSvg,
@@ -13,6 +16,9 @@ const wreckersaurusSvgSources = {
   jawBottom: jawBottomSvg,
   stick: stickSvg,
   tail: tailSvg,
+  treadCover: treadCoverSvg,
+  treadLink: treadLinkSvg,
+  wheel: wheelSvg,
 };
 
 export const wreckersaurusSvg = {
@@ -42,6 +48,20 @@ export const wreckersaurusSvg = {
     viewBox: { width: 703.45694, height: 272.80054 },
     pivot: Vec2(688.4090006070649, 144.29343079847774),
   },
+  treadCover: {
+    viewBox: { width: 281.92102, height: 60.180113 },
+    pivot: Vec2(140.96051, 30.0900565),
+  },
+  treadLink: {
+    viewBox: { width: 55.914306, height: 32.850282 },
+    pivot: Vec2(27.957153, 16.425141),
+    leftConnection: Vec2(-5.6078196, 11.657078),
+    rightConnection: Vec2(42.73499512652157, 12.148276167194695),
+  },
+  wheel: {
+    viewBox: { width: 100.0001, height: 100.00001 },
+    pivot: Vec2(50.00005, 50.000005),
+  },
 };
 
 export function createWreckersaurusImages() {
@@ -60,7 +80,7 @@ export function createWreckersaurusImages() {
 }
 
 function hideSvgPivotMarkers(svg) {
-  return svg.replace(/<circle\b[^>]*inkscape:label="[^"]*pivot-point"[^>]*\/?>/g, (tag) => {
+  return svg.replace(/<circle\b[^>]*inkscape:label="[^"]*(?:pivot-point|connection-point)"[^>]*\/?>/g, (tag) => {
     if (tag.includes("style=")) return tag.replace(/style="[^"]*"/, "style=\"display:none\"");
     return tag.replace(/\/?>$/, " style=\"display:none\" />");
   });

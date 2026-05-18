@@ -1,7 +1,6 @@
 import {
   Box,
   Circle,
-  DistanceJoint,
   Polygon,
   RevoluteJoint,
   Vec2,
@@ -30,7 +29,6 @@ import {
   WRECKERSAURUS_SCALE,
   WRECKERSAURUS_SUSPENSION_DAMPING,
   WRECKERSAURUS_SUSPENSION_FREQUENCY,
-  WRECKERSAURUS_TREAD_LINK_FREQUENCY,
   WRECKERSAURUS_WHEEL_DENSITY,
   WRECKERSAURUS_WHEEL_FRICTION,
 } from "./config.js";
@@ -147,12 +145,11 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       filterGroupIndex: WRECKERSAURUS_COLLISION_GROUP,
     });
   
+    const wheelBase = createWheelBaseLayout(direction);
     const wheels = [];
     const wheelJoints = [];
-    const linkJoints = [];
-    const radius = 0.38 * WRECKERSAURUS_SCALE;
   
-    for (const local of makeTreadLoop(direction)) {
+    for (const local of wheelBase.wheelLocals) {
       const wheel = physicsWorld.createDynamicBody({
         position: chassis.getWorldPoint(local),
         angularDamping: 0.12,
@@ -167,13 +164,13 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
         terrainContactLoadScale: 10,
       });
       wheel.createFixture({
-        shape: Circle(radius),
+        shape: Circle(wheelBase.wheelRadius),
         density: WRECKERSAURUS_WHEEL_DENSITY,
         friction: WRECKERSAURUS_WHEEL_FRICTION,
         restitution: 0,
         filterGroupIndex: WRECKERSAURUS_COLLISION_GROUP,
       });
-      wheels.push({ body: wheel, local, radius });
+      wheels.push({ body: wheel, local, radius: wheelBase.wheelRadius });
   
       wheelJoints.push(physicsWorld.createJoint(WheelJoint({
         enableMotor: true,
@@ -184,28 +181,16 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       }, chassis, wheel, wheel.getPosition(), Vec2(0, 1))));
     }
   
-    for (let i = 0; i < wheels.length; i++) {
-      const a = wheels[i].body;
-      const b = wheels[(i + 1) % wheels.length].body;
-      const length = vecDistance(a.getPosition(), b.getPosition());
-      linkJoints.push(physicsWorld.createJoint(DistanceJoint({
-        frequencyHz: WRECKERSAURUS_TREAD_LINK_FREQUENCY,
-        dampingRatio: 0.85,
-        collideConnected: false,
-        length,
-      }, a, b, a.getPosition(), b.getPosition())));
-    }
-  
     return {
       facing: direction,
       chassis,
       wheels,
       wheelJoints,
-      linkJoints,
+      wheelBase,
       arm: createWreckersaurusArm(chassis, direction, savedState.arm),
       tail: createWreckersaurusTail(chassis, direction, savedState.tail),
       chassisArtPivotLocal: sourceLocal(0.52, 2.78, direction),
-      radius,
+      radius: wheelBase.wheelRadius,
       drivePhase: savedState.drivePhase ?? 0,
     };
   }
@@ -438,35 +423,36 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     return facing === WRECKERSAURUS_FACING_RIGHT ? converted : converted.reverse();
   }
 
-  function makeTreadLoop(facing = WRECKERSAURUS_FACING_RIGHT) {
-    const points = [];
-    const halfLength = 2.45;
-    const topY = -0.34;
-    const bottomY = -1.16;
-    const endRadius = (topY - bottomY) * 0.5;
-    const centerY = (topY + bottomY) * 0.5;
-  
-    for (let i = 0; i < 7; i++) {
-      const t = i / 6;
-      points.push(sourceLocal(-halfLength + t * halfLength * 2, bottomY, facing));
-    }
-  
-    for (let i = 2; i <= 4; i += 2) {
-      const theta = -Math.PI / 2 + (i / 5) * Math.PI;
-      points.push(sourceLocal(halfLength + Math.cos(theta) * endRadius, centerY + Math.sin(theta) * endRadius, facing));
-    }
-  
-    for (let i = 1; i < 7; i++) {
-      const t = i / 6;
-      points.push(sourceLocal(halfLength - t * halfLength * 2, topY, facing));
-    }
-  
-    for (let i = 2; i <= 4; i += 2) {
-      const theta = Math.PI / 2 + (i / 5) * Math.PI;
-      points.push(sourceLocal(-halfLength + Math.cos(theta) * endRadius, centerY + Math.sin(theta) * endRadius, facing));
-    }
-  
-    return points;
+  function createWheelBaseLayout(facing = WRECKERSAURUS_FACING_RIGHT) {
+    const wheelRadius = wreckersaurusSvg.wheel.viewBox.width * WRECKERSAURUS_ART_SCALE * 0.5;
+    const wheelSpacing = wheelRadius * 2;
+    const wheelCenterY = 1.66;
+    const wheelLocals = Array.from({ length: 5 }, (_, index) => Vec2(
+      (index - 2) * wheelSpacing * facing,
+      wheelCenterY,
+    ));
+    const leftX = -2 * wheelSpacing;
+    const rightX = 2 * wheelSpacing;
+    const trackRadius = wheelRadius * 0.94;
+    const linkPitch = svgDistance(
+      wreckersaurusSvg.treadLink.leftConnection,
+      wreckersaurusSvg.treadLink.rightConnection,
+    ) * WRECKERSAURUS_ART_SCALE;
+
+    return {
+      wheelRadius,
+      wheelLocals,
+      coverLocal: Vec2(0, wheelCenterY),
+      track: {
+        leftX,
+        rightX,
+        centerY: wheelCenterY,
+        radius: trackRadius,
+        straightLength: rightX - leftX,
+        arcLength: Math.PI * trackRadius,
+      },
+      linkPitch,
+    };
   }
 
   function segmentCenter(a, b) {
@@ -487,6 +473,10 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
+  }
+
+  function positiveModulo(value, divisor) {
+    return ((value % divisor) + divisor) % divisor;
   }
 
   function updateActiveVehicleMotor(dt) {
@@ -904,12 +894,13 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     if (!activeVehicle) return;
   
     ctx.save();
-    drawTreadBelt(cellW, cellH);
+    drawWreckersaurusChassis(cellW, cellH);
+    drawTreadLinks(cellW, cellH);
     drawWreckersaurusWheels(cellW, cellH);
+    drawTreadCover(cellW, cellH);
     drawWreckersaurusTail(cellW, cellH);
     drawWreckersaurusStick(cellW, cellH);
     drawWreckersaurusBoom(cellW, cellH);
-    drawWreckersaurusChassis(cellW, cellH);
     drawWreckersaurusHeadTop(cellW, cellH);
     drawWreckersaurusJawBottom(cellW, cellH);
     drawArmTarget(cellW, cellH);
@@ -968,54 +959,105 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     };
   }
 
-  function drawTreadBelt(cellW, cellH) {
-    const points = activeVehicle.wheels.map((wheel) => worldToCanvasPoint(wheel.body.getPosition(), cellW, cellH));
-    if (points.length < 3) return;
-  
-    const unit = Math.min(cellW, cellH);
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#171d20";
-    ctx.lineWidth = activeVehicle.radius * unit * 1.72;
-    traceClosed(points);
-    ctx.stroke();
-  
-    ctx.strokeStyle = "#3a4241";
-    ctx.lineWidth = activeVehicle.radius * unit * 0.78;
-    traceClosed(points);
-    ctx.stroke();
-  
-    const phase = ((activeVehicle.drivePhase * unit) % 24 + 24) % 24;
-    ctx.strokeStyle = "rgba(223, 218, 187, 0.75)";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([10, 14]);
-    ctx.lineDashOffset = -phase;
-    traceClosed(points);
-    ctx.stroke();
-    ctx.restore();
+  function drawTreadLinks(cellW, cellH) {
+    const imageAsset = wreckersaurusImages.treadLink;
+    if (!imageAsset.loaded) return;
+
+    const { track, linkPitch } = activeVehicle.wheelBase;
+    const pathLength = getTrackPathLength(track);
+    const linkCount = Math.ceil(pathLength / linkPitch) + 1;
+    const phase = positiveModulo(-activeVehicle.drivePhase * activeVehicle.facing, linkPitch);
+
+    for (let i = 0; i < linkCount; i++) {
+      const sample = sampleWheelBaseTrack(track, i * linkPitch + phase);
+      const localPoint = Vec2(sample.x * activeVehicle.facing, sample.y);
+      drawSvgAtAnchor(
+        imageAsset,
+        activeVehicle.chassis.getWorldPoint(localPoint),
+        activeVehicle.chassis.getAngle() + sample.angle * activeVehicle.facing,
+        wreckersaurusSvg.treadLink.pivot,
+        WRECKERSAURUS_ART_SCALE,
+        activeVehicle.facing,
+        cellW,
+        cellH,
+      );
+    }
   }
 
   function drawWreckersaurusWheels(cellW, cellH) {
-    const unit = Math.min(cellW, cellH);
     ctx.save();
     for (const wheel of activeVehicle.wheels) {
-      const center = worldToCanvasPoint(wheel.body.getPosition(), cellW, cellH);
-      const radius = wheel.radius * unit;
-      ctx.fillStyle = "#323937";
-      ctx.strokeStyle = "#111719";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-  
-      ctx.strokeStyle = "#d8c886";
-      ctx.lineWidth = 2;
-      const angle = wheel.body.getAngle();
-      line(center.x, center.y, center.x + Math.cos(angle) * radius * 0.72, center.y + Math.sin(angle) * radius * 0.72);
+      drawSvgAtAnchor(
+        wreckersaurusImages.wheel,
+        wheel.body.getPosition(),
+        wheel.body.getAngle(),
+        wreckersaurusSvg.wheel.pivot,
+        WRECKERSAURUS_ART_SCALE,
+        activeVehicle.facing,
+        cellW,
+        cellH,
+      );
     }
     ctx.restore();
+  }
+
+  function drawTreadCover(cellW, cellH) {
+    drawSvgAtAnchor(
+      wreckersaurusImages.treadCover,
+      activeVehicle.chassis.getWorldPoint(activeVehicle.wheelBase.coverLocal),
+      activeVehicle.chassis.getAngle(),
+      wreckersaurusSvg.treadCover.pivot,
+      WRECKERSAURUS_ART_SCALE,
+      activeVehicle.facing,
+      cellW,
+      cellH,
+    );
+  }
+
+  function getTrackPathLength(track) {
+    return track.straightLength * 2 + track.arcLength * 2;
+  }
+
+  function sampleWheelBaseTrack(track, distance) {
+    const pathLength = getTrackPathLength(track);
+    const d = positiveModulo(distance, pathLength);
+    const bottomLength = track.straightLength;
+    const rightArcEnd = bottomLength + track.arcLength;
+    const topEnd = rightArcEnd + track.straightLength;
+
+    if (d < bottomLength) {
+      return {
+        x: track.leftX + d,
+        y: track.centerY + track.radius,
+        angle: 0,
+      };
+    }
+
+    if (d < rightArcEnd) {
+      const t = (d - bottomLength) / track.arcLength;
+      const theta = Math.PI / 2 - t * Math.PI;
+      return {
+        x: track.rightX + Math.cos(theta) * track.radius,
+        y: track.centerY + Math.sin(theta) * track.radius,
+        angle: theta - Math.PI / 2,
+      };
+    }
+
+    if (d < topEnd) {
+      return {
+        x: track.rightX - (d - rightArcEnd),
+        y: track.centerY - track.radius,
+        angle: Math.PI,
+      };
+    }
+
+    const t = (d - topEnd) / track.arcLength;
+    const theta = -Math.PI / 2 - t * Math.PI;
+    return {
+      x: track.leftX + Math.cos(theta) * track.radius,
+      y: track.centerY + Math.sin(theta) * track.radius,
+      angle: theta - Math.PI / 2,
+    };
   }
 
   function drawWreckersaurusChassis(cellW, cellH) {
@@ -1146,13 +1188,6 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     };
   }
 
-  function traceClosed(points) {
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-    ctx.closePath();
-  }
-
   function line(x1, y1, x2, y2) {
     ctx.beginPath();
     ctx.moveTo(x1, y1);
@@ -1175,7 +1210,6 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     [
       ...Object.values(wreckersaurus.arm.joints),
       ...wreckersaurus.wheelJoints,
-      ...wreckersaurus.linkJoints,
     ].forEach((joint) => {
       if (joint) physicsWorld.destroyJoint(joint);
     });
