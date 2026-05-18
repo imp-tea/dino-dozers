@@ -6,6 +6,7 @@ import {
   Vec2,
   WheelJoint,
 } from "planck";
+import { canSwapVehicleFacing, createWheelTerrainUserData } from "../vehicleDefaults.js";
 import { createWreckersaurusImages, wreckersaurusSvg } from "./assets.js";
 import {
   WRECKERSAURUS_ARM_SERVO,
@@ -156,13 +157,10 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
         linearDamping: 0.05,
         bullet: true,
       });
-      wheel.setUserData({
+      wheel.setUserData(createWheelTerrainUserData({
         kind: "wreckersaurus",
-        part: "wheel",
-        terrainDamageScale: 0,
-        terrainLoadScale: 0,
         terrainContactLoadScale: 10,
-      });
+      }));
       wheel.createFixture({
         shape: Circle(wheelBase.wheelRadius),
         density: WRECKERSAURUS_WHEEL_DENSITY,
@@ -1222,7 +1220,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
   }
 
   function flipWreckersaurusFacing() {
-    if (!activeVehicle) return;
+    if (!activeVehicle || !canSwapVehicleFacing(activeVehicle)) return false;
   
     const previous = activeVehicle;
     const currentPosition = previous.chassis.getPosition();
@@ -1241,6 +1239,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     sharedWheelSpeed = 0;
     desiredDrive = 0;
     pointerArmControl.deltaLocal = Vec2(0, 0);
+    return true;
   }
 
   function captureFlippedArmState(arm) {

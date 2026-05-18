@@ -35,6 +35,7 @@ export function getControls() {
     damageView: document.querySelector("#damageView"),
     contourView: document.querySelector("#contourView"),
     resetVehicle: document.querySelector("#resetVehicle"),
+    vehicleType: document.querySelector("#vehicleType"),
     unifiedColor: document.querySelector("#unifiedColor"),
   };
 }

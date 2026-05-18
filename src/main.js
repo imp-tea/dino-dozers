@@ -10,6 +10,9 @@ import { createGrid, createGridState } from "./sim/grid.js";
 import { createPackedContourCache } from "./sim/packedContours.js";
 import { getControls, isEditableTarget } from "./ui/controls.js";
 import { createVehicleManager } from "./vehicles/vehicleManager.js";
+import { VEHICLE_TYPES } from "./vehicles/vehicleTypes.js";
+import { ROLLERSAURUS_FRACTURE_LOAD_MULTIPLIER } from "./vehicles/rollersaurus/config.js";
+import { createRollersaurusVehicle } from "./vehicles/rollersaurus/factory.js";
 import { WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER } from "./vehicles/wreckersaurus/config.js";
 import { createWreckersaurusVehicle } from "./vehicles/wreckersaurus/factory.js";
 
@@ -45,20 +48,13 @@ let canvasResizeObserver = null;
 let lastFrame = performance.now();
 
 const { activeKeys, pointerArmControl, joypad } = createInputState();
+let activeVehicleType = VEHICLE_TYPES.ROLLERSAURUS;
 
 const physicsWorld = new World({
   gravity: Vec2(0, 32),
 });
 const vehicleManager = createVehicleManager();
-vehicleManager.setActiveVehicle(createWreckersaurusVehicle({
-  world: physicsWorld,
-  ctx,
-  input: {
-    activeKeys,
-    pointerArmControl,
-    joypad,
-  },
-}));
+setActiveVehicleType(activeVehicleType);
 
 const state = createGridState({
   width: controls.gridWidth.value,
@@ -182,12 +178,18 @@ function updateRigidInfluenceGrid() {
     bodies: vehicleManager.getActiveVehicleBodies(),
     dynamic: true,
     massScale: 1,
-    damageScale: WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER,
+    damageScale: getActiveVehicleFractureLoadMultiplier(),
     affectsTerrain: true,
     distributeLoadToContacts: true,
     contactPart: "wheel",
   });
   rigidInfluence.update();
+}
+
+function getActiveVehicleFractureLoadMultiplier() {
+  return activeVehicleType === VEHICLE_TYPES.ROLLERSAURUS
+    ? ROLLERSAURUS_FRACTURE_LOAD_MULTIPLIER
+    : WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER;
 }
 
 function render() {
@@ -272,6 +274,32 @@ function vehicleStartPosition() {
 function resetActiveVehicle() {
   const start = vehicleStartPosition();
   vehicleManager.reset(Vec2(start.x, start.y));
+}
+
+function setActiveVehicleType(type) {
+  activeVehicleType = type === VEHICLE_TYPES.WRECKERSAURUS
+    ? VEHICLE_TYPES.WRECKERSAURUS
+    : VEHICLE_TYPES.ROLLERSAURUS;
+  vehicleManager.clearActiveVehicle();
+  vehicleManager.setActiveVehicle(createActiveVehicle());
+}
+
+function createActiveVehicle() {
+  const options = {
+    world: physicsWorld,
+    ctx,
+    input: {
+      activeKeys,
+      pointerArmControl,
+      joypad,
+    },
+  };
+
+  if (activeVehicleType === VEHICLE_TYPES.WRECKERSAURUS) {
+    return createWreckersaurusVehicle(options);
+  }
+
+  return createRollersaurusVehicle(options);
 }
 
 function stepPhysics(delta) {
@@ -450,6 +478,11 @@ resizeButton.addEventListener("click", () => {
 });
 
 controls.resetVehicle.addEventListener("click", () => {
+  resetActiveVehicle();
+});
+
+controls.vehicleType.addEventListener("change", () => {
+  setActiveVehicleType(controls.vehicleType.value);
   resetActiveVehicle();
 });
 
