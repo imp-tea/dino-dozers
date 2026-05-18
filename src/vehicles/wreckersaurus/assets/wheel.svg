@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   version="1.1"
+   viewBox="0 0 100.0001 100.00001"
+   id="svg1177"
+   xml:space="preserve"
+   width="100.0001"
+   height="100.00001"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><defs
+     id="defs1177" /><g
+     id="layer5"
+     transform="translate(31.917398,-670.62999)"><g
+       id="g6"
+       transform="matrix(-1,0,0,1,1313.0266,-159.20069)"><path
+         style="fill:#686667;fill-opacity:1;stroke:#413f3e;stroke-width:0;stroke-dasharray:none;stroke-opacity:1"
+         d="m 1316.2526,834.25382 -2.8306,-1.1137 -6.3313,3.22159 -3.9319,-6.32863 -3.2149,-0.20239 -5,5 -5,-5 -3.1111,0.40974 -3.5357,6.12373 -6.1237,-3.53554 -2.8993,1.20087 -1.8302,6.83013 -6.83,-1.83013 -2.4897,1.91036 v 7.07107 h -7.071 l -1.9104,2.48961 1.8301,6.83013 -6.8301,1.83013 -1.201,2.89926 3.5355,6.12372 -6.1238,3.53554 -0.4096,3.11138 5,5 -5,5 0.4098,3.11133 6.1237,3.53554 -3.5355,6.12372 1.201,2.89926 6.83,1.83013 -1.83,6.83012 1.9103,2.48974 h 7.071 v 7.07106 l 2.4897,1.91035 6.83,-1.83012 1.8303,6.83012 2.8992,1.20094 6.1237,-3.53553 3.5355,6.12372 3.1114,0.40962 5,-5 5,5 3.1114,-0.4096 3.5355,-6.12373 6.1237,3.53554 2.8993,-1.20087 1.8301,-6.83013 6.8301,1.83013 2.4897,-1.91044 v -7.07106 h 7.0711 l 1.9104,-2.48974 -1.8301,-6.83013 6.8301,-1.83013 1.2009,-2.89932 -3.5355,-6.12372 6.1237,-3.53554 0.4096,-3.11126 -5,-5 5,-5 -0.4096,-3.11143 -6.1237,-3.53554 3.5355,-6.12372 -1.2009,-2.89909 -6.8302,-1.83013 1.8302,-6.83013 -1.9104,-2.48973 h -7.0711 v -7.07107 l -2.4896,-1.91045 -6.8303,1.83013 z"
+         id="path5" /><circle
+         style="fill:#504f51;fill-opacity:1;stroke:#413f3e;stroke-width:0;stroke-dasharray:none;stroke-opacity:1"
+         id="path2"
+         cx="-1294.944"
+         cy="879.83069"
+         r="40"
+         transform="scale(-1,1)" /><circle
+         style="fill:#686667;fill-opacity:1;stroke:#413f3e;stroke-width:4;stroke-dasharray:none;stroke-opacity:1"
+         id="path1"
+         cx="-1294.944"
+         cy="879.83069"
+         transform="scale(-1,1)"
+         r="27.5" /><circle
+         style="fill:none;fill-opacity:1;stroke:#686667;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:3, 15;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal"
+         id="circle5"
+         cx="-1294.944"
+         cy="879.83069"
+         r="34.585396"
+         transform="scale(-1,1)" /></g></g></svg>

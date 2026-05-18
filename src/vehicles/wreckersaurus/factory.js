@@ -159,7 +159,13 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
         linearDamping: 0.05,
         bullet: true,
       });
-      wheel.setUserData({ kind: "wreckersaurus", part: "wheel" });
+      wheel.setUserData({
+        kind: "wreckersaurus",
+        part: "wheel",
+        terrainDamageScale: 0,
+        terrainLoadScale: 0,
+        terrainContactLoadScale: 10,
+      });
       wheel.createFixture({
         shape: Circle(radius),
         density: WRECKERSAURUS_WHEEL_DENSITY,

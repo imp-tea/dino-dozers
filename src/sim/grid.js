@@ -17,6 +17,7 @@ export function createGridState({ width, height }) {
     rigidVx: null,
     rigidVy: null,
     rigidMass: null,
+    rigidImpactMass: null,
     externalLoad: null,
     vx: null,
     vy: null,
@@ -58,6 +59,7 @@ export function createGrid(state, callbacks = {}) {
     state.rigidVx = new Float32Array(total);
     state.rigidVy = new Float32Array(total);
     state.rigidMass = new Float32Array(total);
+    state.rigidImpactMass = new Float32Array(total);
     state.externalLoad = new Float32Array(total);
     state.vx = new Int16Array(total);
     state.vy = new Int16Array(total);

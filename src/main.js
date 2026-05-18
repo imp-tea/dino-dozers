@@ -157,6 +157,7 @@ function seedWorld() {
   state.rigidVx.fill(0);
   state.rigidVy.fill(0);
   state.rigidMass.fill(0);
+  state.rigidImpactMass.fill(0);
   state.externalLoad.fill(0);
   state.vx.fill(0);
   state.vy.fill(0);
@@ -183,6 +184,8 @@ function updateRigidInfluenceGrid() {
     massScale: 1,
     damageScale: WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER,
     affectsTerrain: true,
+    distributeLoadToContacts: true,
+    contactPart: "wheel",
   });
   rigidInfluence.update();
 }
@@ -428,6 +431,7 @@ clearButton.addEventListener("click", () => {
   state.rigidVx.fill(0);
   state.rigidVy.fill(0);
   state.rigidMass.fill(0);
+  state.rigidImpactMass.fill(0);
   state.externalLoad.fill(0);
   state.vx.fill(0);
   state.vy.fill(0);

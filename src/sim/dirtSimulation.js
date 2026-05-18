@@ -94,8 +94,9 @@ export function createDirtSimulation({
         if (state.cells[below] === PACKED) state.externalLoad[below] += load;
       }
 
+      if (state.rigidImpactMass[i] <= 0) continue;
       if (speed < RIGID_BREAK_SPEED) continue;
-      const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidMass[i]);
+      const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidImpactMass[i]);
       fracturePackedNearRigid(x, y, impact, state.rigidVx[i], state.rigidVy[i]);
     }
   }
