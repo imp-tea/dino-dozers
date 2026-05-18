@@ -12,6 +12,6 @@
     "planck": "^1.4.2"
   },
   "devDependencies": {
-    "vite": "^5.4.21"
+    "vite": "^8.0.13"
   }
 }
