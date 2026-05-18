@@ -1,4 +1,20 @@
-import { Box, Chain, Circle, Vec2, WheelJoint, World } from "planck";
+import {
+  Box,
+  Chain,
+  Circle,
+  DistanceJoint,
+  Polygon,
+  RevoluteJoint,
+  Vec2,
+  WheelJoint,
+  World,
+} from "planck";
+import boomSvg from "./excavator_images/boom.svg?raw";
+import chassisSvg from "./excavator_images/chassis.svg?raw";
+import headTopSvg from "./excavator_images/head_top.svg?raw";
+import jawBottomSvg from "./excavator_images/jaw_bottom.svg?raw";
+import stickSvg from "./excavator_images/stick.svg?raw";
+import tailSvg from "./excavator_images/tail.svg?raw";
 
 const EMPTY = 0;
 const LOOSE = 1;
@@ -30,18 +46,143 @@ const VEHICLE_CHASSIS_DENSITY = 0.9;
 const VEHICLE_WHEEL_DENSITY = 1.8;
 const VEHICLE_SUSPENSION_FREQUENCY = 6.5;
 const VEHICLE_SUSPENSION_DAMPING = 0.9;
-const VEHICLE_BODY_CHASSIS = 1;
-const VEHICLE_BODY_LEFT_WHEEL = 2;
-const VEHICLE_BODY_RIGHT_WHEEL = 3;
 const VEHICLE_LOAD_SCALE = 0.18;
 const VEHICLE_BREAK_SPEED = 6;
 const VEHICLE_BREAK_DAMAGE = 0.0225;
 const VEHICLE_LOOSE_KICK = 0.45;
+const EXCAVATOR_SCALE = 2.25;
+const EXCAVATOR_SOURCE_ART_SCALE = 0.0118;
+const EXCAVATOR_ART_SCALE = EXCAVATOR_SOURCE_ART_SCALE * EXCAVATOR_SCALE;
+const EXCAVATOR_HEAD_JAW_ART_SCALE = EXCAVATOR_ART_SCALE;
+const EXCAVATOR_DRIVE_SPEED = 20;
+const EXCAVATOR_MOTOR_TORQUE = 980;
+const EXCAVATOR_WHEEL_FRICTION = 9.5;
+const EXCAVATOR_SUSPENSION_FREQUENCY = 7.4;
+const EXCAVATOR_SUSPENSION_DAMPING = 0.74;
+const EXCAVATOR_TREAD_LINK_FREQUENCY = 18;
+const EXCAVATOR_CHASSIS_DENSITY = 0.82;
+const EXCAVATOR_WHEEL_DENSITY = 1.2;
+const EXCAVATOR_ARM_SPEED = 2.7;
+const EXCAVATOR_DIRECT_TARGET_SPEED = 9.2;
+const EXCAVATOR_DIRECT_HEAD_TURN_SPEED = 1.45;
+const EXCAVATOR_JAW_OPEN_ANGLE = 0.48;
+const EXCAVATOR_JAW_CLOSED_ANGLE = -0.2;
+const EXCAVATOR_COLLISION_GROUP = -3;
+const EXCAVATOR_FACING_RIGHT = 1;
+const EXCAVATOR_FACING_LEFT = -1;
+const EXCAVATOR_GAMEPAD_DEADZONE = 0.14;
+const EXCAVATOR_FLIP_UPWARD_IMPULSE = 780;
+const EXCAVATOR_FLIP_SIDE_IMPULSE = 120;
+const EXCAVATOR_FLIP_ANGULAR_IMPULSE = 900;
+const EXCAVATOR_FRACTURE_LOAD_MULTIPLIER = 0.78;
+const EXCAVATOR_ARM_SERVO = {
+  boomAngle: { gain: 3.1, damping: 0.28, speedScale: 1 },
+  stickAngle: { gain: 2.8, damping: 0.34, speedScale: 1.02 },
+  headAngle: { gain: 1.55, damping: 0.72, speedScale: 0.7 },
+  jawAngle: { gain: 1.45, damping: 0.68, speedScale: 0.82 },
+};
 const PACKED_CONTOUR_FILL = "#76533a";
 const PACKED_CONTOUR_STROKE = "#3f2518";
+const VEHICLE_FRACTURE_OFFSETS = [
+  [0, 0],
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
+const SUPPORT_PARENT_OFFSETS = [
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+];
+const BEARING_NEIGHBOR_OFFSETS = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+];
+const SUPPORT_RELIEF_OFFSETS = [
+  [0, 1, 1.7],
+  [-1, 1, 0.65],
+  [1, 1, 0.65],
+  [-1, 0, 0.35],
+  [1, 0, 0.35],
+];
+const PACKED_COLOR_CHANNELS = Array.from({ length: 16 }, (_, shade) => ({
+  r: 118 + shade,
+  g: 83 + Math.floor(shade * 0.35),
+  b: 58,
+}));
+const PACKED_COLORS = PACKED_COLOR_CHANNELS.map(({ r, g, b }) => `rgb(${r}, ${g}, ${b})`);
+const LOOSE_COLORS = Array.from({ length: 19 }, (_, shade) => {
+  return `rgb(${178 + shade}, ${129 + Math.floor(shade * 0.45)}, ${70 + Math.floor(shade * 0.25)})`;
+});
+
+const excavatorSvgSources = {
+  boom: boomSvg,
+  chassis: chassisSvg,
+  headTop: headTopSvg,
+  jawBottom: jawBottomSvg,
+  stick: stickSvg,
+  tail: tailSvg,
+};
+
+const excavatorSvg = {
+  chassis: {
+    viewBox: { width: 426.82097, height: 340.82208 },
+    pivot: Vec2(236.6112, 57.62656),
+  },
+  boom: {
+    viewBox: { width: 333.5395, height: 96.427896 },
+    pivot: Vec2(45.4245129294211, 58.82864074727431),
+    end: Vec2(297.2951131711393, 59.348611535867065),
+  },
+  stick: {
+    viewBox: { width: 306.4821, height: 93.074541 },
+    pivot: Vec2(39.42127534470046, 40.65460805369406),
+    end: Vec2(282.2326913485542, 39.58668016199704),
+  },
+  headTop: {
+    viewBox: { width: 364.81359, height: 189.71103 },
+    pivot: Vec2(32.98793999999998, 137.32751000000002),
+  },
+  jawBottom: {
+    viewBox: { width: 369.43248, height: 170.07074 },
+    pivot: Vec2(32.16271999999998, 42.527180000000016),
+  },
+  tail: {
+    viewBox: { width: 703.45694, height: 272.80054 },
+    pivot: Vec2(688.4090006070649, 144.29343079847774),
+  },
+};
 
 const canvas = document.querySelector("#sim");
 const ctx = canvas.getContext("2d");
+const canvasWrap = canvas.parentElement;
+const statsElement = document.querySelector("#stats");
+const playPauseButton = document.querySelector("#playPause");
+const stepButton = document.querySelector("#step");
+const seedButton = document.querySelector("#seed");
+const clearButton = document.querySelector("#clear");
+const resizeButton = document.querySelector("#resize");
+const modeButtons = Array.from(document.querySelectorAll(".mode"));
+const shapeButtons = Array.from(document.querySelectorAll(".shape"));
+const excavatorImages = createExcavatorImages();
+
+const canvasLayout = {
+  dirty: true,
+  ratio: 0,
+  gridWidth: 0,
+  gridHeight: 0,
+  cellW: 1,
+  cellH: 1,
+};
+
+const statsCache = {
+  dirty: true,
+  tick: -1,
+  threshold: Number.NaN,
+};
 
 const controls = {
   brushSize: bindRange("brushSize", Number),
@@ -69,14 +210,35 @@ let packedContours = [];
 let physicsAccumulator = 0;
 let dirtAccumulator = 0;
 let physicsTerrainBody = null;
-let physicsChassisBody = null;
-let physicsLeftWheelBody = null;
-let physicsRightWheelBody = null;
-let physicsLeftWheelJoint = null;
-let physicsRightWheelJoint = null;
+let physicsExcavator = null;
+let sharedWheelSpeed = 0;
 let isDrivingLeft = false;
 let isDrivingRight = false;
+let desiredDrive = 0;
+let canvasResizeObserver = null;
 let lastFrame = performance.now();
+
+const activeKeys = new Set();
+const pointerArmControl = {
+  active: false,
+  lastX: 0,
+  lastY: 0,
+  deltaLocal: Vec2(0, 0),
+  lastInputAt: 0,
+};
+const joypad = {
+  supported: typeof navigator !== "undefined" && typeof navigator.getGamepads === "function",
+  connected: false,
+  index: null,
+  drive: 0,
+  armX: 0,
+  armY: 0,
+  headTurn: 0,
+  jawOpen: false,
+  lastAButton: false,
+  lastYButton: false,
+  active: false,
+};
 
 const physicsWorld = new World({
   gravity: Vec2(0, 32),
@@ -93,7 +255,6 @@ const state = {
   visualX: null,
   visualY: null,
   rigid: null,
-  rigidBody: null,
   rigidVx: null,
   rigidVy: null,
   rigidMass: null,
@@ -101,6 +262,13 @@ const state = {
   vx: null,
   vy: null,
   touched: null,
+  clusterSeen: null,
+  clusterSeenToken: 0,
+  clusterCells: [],
+  clusterQueue: [],
+  supportDistances: null,
+  supportLoads: null,
+  supportQueue: [],
   tool: "packed",
   brushShape: "circle",
   running: true,
@@ -129,6 +297,50 @@ function bindRange(id, parser) {
   };
 }
 
+function markCanvasLayoutDirty() {
+  canvasLayout.dirty = true;
+}
+
+function syncCanvasLayout() {
+  const ratio = window.devicePixelRatio || 1;
+  if (
+    !canvasLayout.dirty &&
+    canvasLayout.ratio === ratio &&
+    canvasLayout.gridWidth === state.width &&
+    canvasLayout.gridHeight === state.height
+  ) {
+    return;
+  }
+
+  const wrap = canvasWrap.getBoundingClientRect();
+  const simAspect = state.width / state.height;
+  const wrapAspect = wrap.width / wrap.height;
+  const cssWidth = Math.max(1, Math.floor(wrapAspect > simAspect ? wrap.height * simAspect : wrap.width));
+  const cssHeight = Math.max(1, Math.floor(wrapAspect > simAspect ? wrap.height : wrap.width / simAspect));
+  const nextWidth = Math.max(1, Math.floor(cssWidth * ratio));
+  const nextHeight = Math.max(1, Math.floor(cssHeight * ratio));
+
+  const cssWidthValue = `${cssWidth}px`;
+  const cssHeightValue = `${cssHeight}px`;
+  if (canvas.style.width !== cssWidthValue) canvas.style.width = cssWidthValue;
+  if (canvas.style.height !== cssHeightValue) canvas.style.height = cssHeightValue;
+  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+  }
+
+  canvasLayout.dirty = false;
+  canvasLayout.ratio = ratio;
+  canvasLayout.gridWidth = state.width;
+  canvasLayout.gridHeight = state.height;
+  canvasLayout.cellW = canvas.width / state.width;
+  canvasLayout.cellH = canvas.height / state.height;
+}
+
+function markStatsDirty() {
+  statsCache.dirty = true;
+}
+
 function resizeGrid(width, height) {
   state.width = width;
   state.height = height;
@@ -141,7 +353,6 @@ function resizeGrid(width, height) {
   state.visualX = new Float32Array(total);
   state.visualY = new Float32Array(total);
   state.rigid = new Uint8Array(total);
-  state.rigidBody = new Int16Array(total);
   state.rigidVx = new Float32Array(total);
   state.rigidVy = new Float32Array(total);
   state.rigidMass = new Float32Array(total);
@@ -149,7 +360,13 @@ function resizeGrid(width, height) {
   state.vx = new Int16Array(total);
   state.vy = new Int16Array(total);
   state.touched = new Uint32Array(total);
+  state.clusterSeen = new Uint32Array(total);
+  state.clusterSeenToken = 0;
+  state.supportDistances = new Float32Array(total);
+  state.supportLoads = new Float32Array(total);
   state.tick = 0;
+  markCanvasLayoutDirty();
+  markStatsDirty();
   seedWorld();
 }
 
@@ -185,42 +402,7 @@ function isSolidForDirt(i) {
   return state.cells[i] !== EMPTY || state.rigid[i] !== 0;
 }
 
-function swapCells(a, b) {
-  const touchesPacked = state.cells[a] === PACKED || state.cells[b] === PACKED;
-  const c = state.cells[a];
-  state.cells[a] = state.cells[b];
-  state.cells[b] = c;
-  const age = state.ages[a];
-  state.ages[a] = state.ages[b];
-  state.ages[b] = age;
-  const damage = state.damage[a];
-  state.damage[a] = state.damage[b];
-  state.damage[b] = damage;
-  const stress = state.stress[a];
-  state.stress[a] = state.stress[b];
-  state.stress[b] = stress;
-  const visualStress = state.visualStress[a];
-  state.visualStress[a] = state.visualStress[b];
-  state.visualStress[b] = visualStress;
-  const visualX = state.visualX[a];
-  state.visualX[a] = state.visualX[b];
-  state.visualX[b] = visualX;
-  const visualY = state.visualY[a];
-  state.visualY[a] = state.visualY[b];
-  state.visualY[b] = visualY;
-  const vx = state.vx[a];
-  state.vx[a] = state.vx[b];
-  state.vx[b] = vx;
-  const vy = state.vy[a];
-  state.vy[a] = state.vy[b];
-  state.vy[b] = vy;
-  const touched = state.touched[a];
-  state.touched[a] = state.touched[b];
-  state.touched[b] = touched;
-  if (touchesPacked) markPackedTerrainDirty();
-}
-
-function clearCell(i) {
+function clearCell(i, shouldMarkStats = true) {
   const wasPacked = state.cells[i] === PACKED;
   state.cells[i] = EMPTY;
   state.ages[i] = 0;
@@ -231,6 +413,7 @@ function clearCell(i) {
   state.vy[i] = 0;
   state.touched[i] = 0;
   resetCellVisualPosition(i);
+  if (shouldMarkStats) markStatsDirty();
   if (wasPacked) markPackedTerrainDirty();
 }
 
@@ -245,6 +428,7 @@ function setCell(i, kind) {
   state.vy[i] = 0;
   state.touched[i] = 0;
   resetCellVisualPosition(i);
+  markStatsDirty();
   if (wasPacked || kind === PACKED) markPackedTerrainDirty();
 }
 
@@ -255,6 +439,7 @@ function markPackedTerrainDirty() {
 
 function seedWorld() {
   markPackedTerrainDirty();
+  markStatsDirty();
   dirtAccumulator = 0;
   state.cells.fill(EMPTY);
   state.ages.fill(0);
@@ -263,7 +448,6 @@ function seedWorld() {
   state.visualStress.fill(0);
   settleDirtVisualPositions();
   state.rigid.fill(0);
-  state.rigidBody.fill(0);
   state.rigidVx.fill(0);
   state.rigidVy.fill(0);
   state.rigidMass.fill(0);
@@ -292,80 +476,126 @@ function simulationStep() {
 
 function updateVehicleGridInfluence() {
   state.rigid.fill(0);
-  state.rigidBody.fill(0);
   state.rigidVx.fill(0);
   state.rigidVy.fill(0);
   state.rigidMass.fill(0);
   state.externalLoad.fill(0);
 
-  rasterizeVehicleBox(
-    physicsChassisBody,
-    VEHICLE_CHASSIS_HALF_WIDTH,
-    VEHICLE_CHASSIS_HALF_HEIGHT,
-    VEHICLE_BODY_CHASSIS,
-  );
-  rasterizeVehicleCircle(physicsLeftWheelBody, VEHICLE_WHEEL_RADIUS, VEHICLE_BODY_LEFT_WHEEL);
-  rasterizeVehicleCircle(physicsRightWheelBody, VEHICLE_WHEEL_RADIUS, VEHICLE_BODY_RIGHT_WHEEL);
+  for (const body of getExcavatorBodies()) {
+    rasterizeVehicleBody(body);
+  }
   applyVehicleTerrainEffects();
 }
 
-function rasterizeVehicleBox(body, halfWidth, halfHeight, bodyId) {
+function rasterizeVehicleBody(body) {
   if (!body) return;
 
-  const position = body.getPosition();
-  const angle = body.getAngle();
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const radius = Math.hypot(halfWidth, halfHeight) + 1;
-  const minX = Math.max(0, Math.floor(position.x - radius));
-  const maxX = Math.min(state.width - 1, Math.ceil(position.x + radius));
-  const minY = Math.max(0, Math.floor(position.y - radius));
-  const maxY = Math.min(state.height - 1, Math.ceil(position.y + radius));
-  const area = Math.max(1, halfWidth * 2 * halfHeight * 2);
-  const cellMass = body.getMass() / area;
+  const fixtures = [];
+  for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
+    fixtures.push(fixture);
+  }
+  if (!fixtures.length) return;
 
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const centerX = x + 0.5 - position.x;
-      const centerY = y + 0.5 - position.y;
-      const localX = centerX * cos + centerY * sin;
-      const localY = -centerX * sin + centerY * cos;
-      if (Math.abs(localX) > halfWidth || Math.abs(localY) > halfHeight) continue;
-      markVehicleCell(x, y, body, bodyId, cellMass);
+  const massShare = Math.max(0.01, body.getMass()) / fixtures.length;
+  for (const fixture of fixtures) {
+    const shape = fixture.getShape();
+    if (shape.m_vertices) {
+      rasterizeVehiclePolygon(body, shape.m_vertices, massShare);
+    } else if (shape.m_radius != null) {
+      rasterizeVehicleCircleShape(body, shape, massShare);
     }
   }
 }
 
-function rasterizeVehicleCircle(body, radius, bodyId) {
-  if (!body) return;
+function rasterizeVehiclePolygon(body, localVertices, massShare) {
+  if (!localVertices?.length) return;
 
-  const position = body.getPosition();
-  const minX = Math.max(0, Math.floor(position.x - radius - 1));
-  const maxX = Math.min(state.width - 1, Math.ceil(position.x + radius + 1));
-  const minY = Math.max(0, Math.floor(position.y - radius - 1));
-  const maxY = Math.min(state.height - 1, Math.ceil(position.y + radius + 1));
+  const vertices = localVertices.map((vertex) => body.getWorldPoint(vertex));
+  const bounds = polygonBounds(vertices, 1);
+  const area = Math.max(1, polygonArea(vertices));
+  const cellMass = (massShare / area) * EXCAVATOR_FRACTURE_LOAD_MULTIPLIER;
+
+  for (let y = bounds.minY; y <= bounds.maxY; y++) {
+    for (let x = bounds.minX; x <= bounds.maxX; x++) {
+      if (!isPointInPolygon(x + 0.5, y + 0.5, vertices)) continue;
+      markVehicleCell(x, y, body, cellMass);
+    }
+  }
+}
+
+function rasterizeVehicleCircleShape(body, shape, massShare) {
+  const center = shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition();
+  const radius = shape.m_radius;
+
+  const minX = Math.max(0, Math.floor(center.x - radius - 1));
+  const maxX = Math.min(state.width - 1, Math.ceil(center.x + radius + 1));
+  const minY = Math.max(0, Math.floor(center.y - radius - 1));
+  const maxY = Math.min(state.height - 1, Math.ceil(center.y + radius + 1));
   const radiusSq = radius * radius;
   const area = Math.max(1, Math.PI * radiusSq);
-  const cellMass = body.getMass() / area;
+  const cellMass = (massShare / area) * EXCAVATOR_FRACTURE_LOAD_MULTIPLIER;
 
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
-      const dx = x + 0.5 - position.x;
-      const dy = y + 0.5 - position.y;
+      const dx = x + 0.5 - center.x;
+      const dy = y + 0.5 - center.y;
       if (dx * dx + dy * dy > radiusSq) continue;
-      markVehicleCell(x, y, body, bodyId, cellMass);
+      markVehicleCell(x, y, body, cellMass);
     }
   }
 }
 
-function markVehicleCell(x, y, body, bodyId, cellMass) {
+function polygonBounds(vertices, padding = 0) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (const vertex of vertices) {
+    minX = Math.min(minX, vertex.x);
+    maxX = Math.max(maxX, vertex.x);
+    minY = Math.min(minY, vertex.y);
+    maxY = Math.max(maxY, vertex.y);
+  }
+
+  return {
+    minX: Math.max(0, Math.floor(minX - padding)),
+    maxX: Math.min(state.width - 1, Math.ceil(maxX + padding)),
+    minY: Math.max(0, Math.floor(minY - padding)),
+    maxY: Math.min(state.height - 1, Math.ceil(maxY + padding)),
+  };
+}
+
+function polygonArea(vertices) {
+  let sum = 0;
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i];
+    const b = vertices[(i + 1) % vertices.length];
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) * 0.5;
+}
+
+function isPointInPolygon(x, y, vertices) {
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const a = vertices[i];
+    const b = vertices[j];
+    const crosses = (a.y > y) !== (b.y > y);
+    if (!crosses) continue;
+    const edgeX = ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x;
+    if (x < edgeX) inside = !inside;
+  }
+  return inside;
+}
+
+function markVehicleCell(x, y, body, cellMass) {
   const i = index(x, y);
   const velocity = body.getLinearVelocityFromWorldPoint(Vec2(x + 0.5, y + 0.5));
   const previousMass = state.rigidMass[i];
   const nextMass = previousMass + cellMass;
 
   state.rigid[i] = 1;
-  state.rigidBody[i] = bodyId;
   state.rigidVx[i] = (state.rigidVx[i] * previousMass + velocity.x * cellMass) / nextMass;
   state.rigidVy[i] = (state.rigidVy[i] * previousMass + velocity.y * cellMass) / nextMass;
   state.rigidMass[i] = nextMass;
@@ -393,15 +623,9 @@ function applyVehicleTerrainEffects() {
 }
 
 function fracturePackedNearVehicle(x, y, impact, vx, vy) {
-  const candidates = [
-    [x, y],
-    [x - 1, y],
-    [x + 1, y],
-    [x, y - 1],
-    [x, y + 1],
-  ];
-
-  for (const [nx, ny] of candidates) {
+  for (const [dx, dy] of VEHICLE_FRACTURE_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
     if (!inBounds(nx, ny)) continue;
     const i = index(nx, ny);
     if (state.cells[i] !== PACKED) continue;
@@ -419,6 +643,11 @@ function fracturePackedNearVehicle(x, y, impact, vx, vy) {
 function updateLoose() {
   const w = state.width;
   const h = state.height;
+  const settings = {
+    settleTicks: controls.settleTicks.value,
+    spread: controls.spread.value,
+    jitter: controls.jitter.value,
+  };
   state.rngFlip = !state.rngFlip;
 
   for (let y = h - 1; y >= 0; y--) {
@@ -427,12 +656,12 @@ function updateLoose() {
       const x = leftToRight ? n : w - 1 - n;
       const i = index(x, y);
       if (state.cells[i] !== LOOSE || state.touched[i] === state.tick) continue;
-      updateLooseCell(i);
+      updateLooseCell(i, settings);
     }
   }
 }
 
-function updateLooseCell(start) {
+function updateLooseCell(start, settings) {
   if (state.cells[start] !== LOOSE) return;
   state.touched[start] = state.tick;
   if (state.rigid[start] && pushLooseOutOfVehicle(start) !== start) return;
@@ -447,17 +676,17 @@ function updateLooseCell(start) {
     state.vy[start] = clampVelocity(state.vy[start] + LOOSE_GRAVITY);
   }
 
-  let current = attemptAxisMove(start, "y", hadVerticalVelocity);
+  let current = attemptAxisMove(start, "y", hadVerticalVelocity, settings);
   if (current < 0 || state.cells[current] !== LOOSE) return;
 
   const movedVertical = current !== start;
   if (!movedVertical && state.vy[current] === 0) {
-    const slid = tryRestingSlide(current);
+    const slid = tryRestingSlide(current, settings);
     if (slid >= 0 && slid !== current) current = slid;
     if (slid < 0) return;
 
     if (current >= 0 && state.cells[current] === LOOSE) {
-      const slumped = tryColumnSlump(current);
+      const slumped = tryColumnSlump(current, settings);
       if (slumped !== current) current = slumped;
     }
 
@@ -474,9 +703,9 @@ function updateLooseCell(start) {
   }
 
   if (current >= 0 && state.cells[current] === LOOSE && state.vx[current] !== 0) {
-    current = attemptAxisMove(current, "x", true);
+    current = attemptAxisMove(current, "x", true, settings);
     if (current < 0 || state.cells[current] !== LOOSE) return;
-    applySlidingFriction(current);
+    applySlidingFriction(current, settings);
   }
 
   state.vx[current] = dampVelocity(state.vx[current]);
@@ -495,7 +724,7 @@ function updateLooseCell(start) {
     state.ages[current] = 0;
   } else if (isResting) {
     state.ages[current]++;
-    if (state.ages[current] >= controls.settleTicks.value && canLooseCellPack(current)) setCell(current, PACKED);
+    if (state.ages[current] >= settings.settleTicks && canLooseCellPack(current)) setCell(current, PACKED);
   } else {
     state.ages[current] = 0;
   }
@@ -513,7 +742,7 @@ function moveLoose(from, to) {
   state.vx[to] = state.vx[from];
   state.vy[to] = state.vy[from];
   state.touched[to] = state.tick;
-  clearCell(from);
+  clearCell(from, false);
   return to;
 }
 
@@ -608,7 +837,7 @@ function pushLooseOutOfVehicle(i) {
   return i;
 }
 
-function attemptAxisMove(start, axis, allowCollisionSideStep) {
+function attemptAxisMove(start, axis, allowCollisionSideStep, settings) {
   const velocity = axis === "x" ? state.vx[start] : state.vy[start];
   if (velocity === 0 || state.cells[start] !== LOOSE) return start;
 
@@ -639,7 +868,7 @@ function attemptAxisMove(start, axis, allowCollisionSideStep) {
 
       if (axis === "y" && direction > 0 && steps <= 1) {
         state.vy[current] = 0;
-        const slid = allowCollisionSideStep ? tryDiagonalFall(current) : current;
+        const slid = allowCollisionSideStep ? tryDiagonalFall(current, settings) : current;
         const didSlide = slid >= 0 && slid !== current;
         if (slid >= 0) current = slid;
         if (
@@ -660,7 +889,7 @@ function attemptAxisMove(start, axis, allowCollisionSideStep) {
 
       if (axis === "y" && direction > 0) {
         state.vy[current] = 0;
-        const slid = allowCollisionSideStep ? tryDiagonalFall(current) : current;
+        const slid = allowCollisionSideStep ? tryDiagonalFall(current, settings) : current;
         const didSlide = slid >= 0 && slid !== current;
         if (slid >= 0) current = slid;
         if (!didSlide && !isNeedleTop(current) && canLooseCellPack(current) && shouldPackAgainstStableColumn(current)) {
@@ -728,7 +957,7 @@ function shouldPackAgainstStableColumn(i) {
   return hasDirectPackedColumnToGround(index(x, y + 1));
 }
 
-function tryDiagonalFall(i) {
+function tryDiagonalFall(i, settings) {
   const x = i % state.width;
   const y = Math.floor(i / state.width);
   if (y >= state.height - 1) return i;
@@ -744,26 +973,26 @@ function tryDiagonalFall(i) {
     if (!isEmptyForDirt(target)) continue;
     const moved = moveLoose(i, target);
     state.vy[moved] = 0;
-    if (Math.random() < controls.spread.value) state.vx[moved] = clampVelocity(state.vx[moved] + direction);
+    if (Math.random() < settings.spread) state.vx[moved] = clampVelocity(state.vx[moved] + direction);
     return moved;
   }
 
   return i;
 }
 
-function tryRestingSlide(i) {
+function tryRestingSlide(i, settings) {
   if (state.vy[i] !== 0 || !hasSupport(i)) return i;
-  return tryDiagonalFall(i);
+  return tryDiagonalFall(i, settings);
 }
 
-function tryColumnSlump(i) {
+function tryColumnSlump(i, settings) {
   if (state.cells[i] !== LOOSE || !hasSupport(i)) return i;
   const x = i % state.width;
   const y = Math.floor(i / state.width);
   if (y >= state.height - 1) return i;
   if (!isNeedleTop(i)) return i;
 
-  const slumpChance = Math.max(0.42, controls.jitter.value + controls.spread.value * 0.45);
+  const slumpChance = Math.max(0.42, settings.jitter + settings.spread * 0.45);
   if (Math.random() > slumpChance) return i;
 
   const directionFirst = (x + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0 ? -1 : 1;
@@ -796,7 +1025,7 @@ function isNeedleTop(i) {
   return !hasLeftShoulder || !hasRightShoulder;
 }
 
-function applySlidingFriction(i) {
+function applySlidingFriction(i, settings) {
   if (state.vx[i] === 0 || !hasSupport(i)) return;
   const x = i % state.width;
   const y = Math.floor(i / state.width);
@@ -804,44 +1033,48 @@ function applySlidingFriction(i) {
   const friction =
     below < 0 || state.cells[below] === PACKED || state.rigid[below]
       ? 2
-      : 1 + Math.round(controls.jitter.value * 4);
+      : 1 + Math.round(settings.jitter * 4);
   state.vx[i] = reduceTowardZero(state.vx[i], friction);
 }
 
 function analyzePackedClusters() {
   state.stress.fill(0);
   const total = state.width * state.height;
-  const seen = new Uint8Array(total);
-  const cluster = [];
-  const queue = [];
+  const seen = state.clusterSeen;
+  const cluster = state.clusterCells;
+  const queue = state.clusterQueue;
+
+  state.clusterSeenToken = state.clusterSeenToken === 0xffffffff ? 1 : state.clusterSeenToken + 1;
+  if (state.clusterSeenToken === 1) seen.fill(0);
+  const seenToken = state.clusterSeenToken;
 
   for (let i = 0; i < total; i++) {
-    if (state.cells[i] !== PACKED || seen[i]) continue;
+    if (state.cells[i] !== PACKED || seen[i] === seenToken) continue;
     cluster.length = 0;
     queue.length = 0;
     queue.push(i);
-    seen[i] = 1;
+    seen[i] = seenToken;
 
     for (let q = 0; q < queue.length; q++) {
       const current = queue[q];
       cluster.push(current);
       const x = current % state.width;
       const y = Math.floor(current / state.width);
-      addPackedNeighbor(x - 1, y, seen, queue);
-      addPackedNeighbor(x + 1, y, seen, queue);
-      addPackedNeighbor(x, y - 1, seen, queue);
-      addPackedNeighbor(x, y + 1, seen, queue);
+      addPackedNeighbor(x - 1, y, seen, seenToken, queue);
+      addPackedNeighbor(x + 1, y, seen, seenToken, queue);
+      addPackedNeighbor(x, y - 1, seen, seenToken, queue);
+      addPackedNeighbor(x, y + 1, seen, seenToken, queue);
     }
 
     processCluster(cluster);
   }
 }
 
-function addPackedNeighbor(x, y, seen, queue) {
+function addPackedNeighbor(x, y, seen, seenToken, queue) {
   if (!inBounds(x, y)) return;
   const i = index(x, y);
-  if (seen[i] || state.cells[i] !== PACKED) return;
-  seen[i] = 1;
+  if (seen[i] === seenToken || state.cells[i] !== PACKED) return;
+  seen[i] = seenToken;
   queue.push(i);
 }
 
@@ -867,15 +1100,17 @@ function processCluster(cluster) {
     return;
   }
 
-  const distances = computeSupportDistances(cluster);
+  const distances = computeSupportDistances(cluster, controls.bridgePenalty.value);
   routeClusterLoad(cluster, distances);
 }
 
-function computeSupportDistances(cluster) {
-  const distances = new Float32Array(state.width * state.height);
-  distances.fill(Number.POSITIVE_INFINITY);
-  const queue = [];
+function computeSupportDistances(cluster, bridgePenalty) {
+  const distances = state.supportDistances;
+  const queue = state.supportQueue;
   let head = 0;
+
+  queue.length = 0;
+  for (const i of cluster) distances[i] = Number.POSITIVE_INFINITY;
 
   for (const i of cluster) {
     const y = Math.floor(i / state.width);
@@ -889,16 +1124,16 @@ function computeSupportDistances(cluster) {
     const current = queue[head++];
     const x = current % state.width;
     const y = Math.floor(current / state.width);
-    relaxSupportNeighbor(x - 1, y, current, distances, queue);
-    relaxSupportNeighbor(x + 1, y, current, distances, queue);
-    relaxSupportNeighbor(x, y - 1, current, distances, queue);
-    relaxSupportNeighbor(x, y + 1, current, distances, queue);
+    relaxSupportNeighbor(x - 1, y, current, distances, bridgePenalty, queue);
+    relaxSupportNeighbor(x + 1, y, current, distances, bridgePenalty, queue);
+    relaxSupportNeighbor(x, y - 1, current, distances, bridgePenalty, queue);
+    relaxSupportNeighbor(x, y + 1, current, distances, bridgePenalty, queue);
   }
 
   return distances;
 }
 
-function relaxSupportNeighbor(x, y, from, distances, queue) {
+function relaxSupportNeighbor(x, y, from, distances, bridgePenalty, queue) {
   if (!inBounds(x, y)) return;
   const next = index(x, y);
   if (state.cells[next] !== PACKED) return;
@@ -908,7 +1143,7 @@ function relaxSupportNeighbor(x, y, from, distances, queue) {
   const upward = y < fy;
   const cost =
     1 +
-    (horizontal ? controls.bridgePenalty.value : 0) +
+    (horizontal ? bridgePenalty : 0) +
     (upward ? 0.25 : 0);
   const candidate = distances[from] + cost;
   if (candidate >= distances[next]) return;
@@ -917,29 +1152,31 @@ function relaxSupportNeighbor(x, y, from, distances, queue) {
 }
 
 function routeClusterLoad(cluster, distances) {
-  const loads = new Float32Array(state.width * state.height);
-  const parents = new Int32Array(state.width * state.height);
-  parents.fill(-1);
-  const sorted = [...cluster].sort((a, b) => distances[b] - distances[a]);
+  const loads = state.supportLoads;
+  const particleWeight = controls.weight.value;
+  const threshold = controls.cohesion.value;
+  const fatigue = controls.fatigue.value;
 
-  for (const i of sorted) {
-    loads[i] += controls.weight.value + looseOverburden(i) + state.externalLoad[i];
-    parents[i] = bestSupportParent(i, distances);
+  for (const i of cluster) loads[i] = 0;
+  cluster.sort((a, b) => distances[b] - distances[a]);
+
+  for (const i of cluster) {
+    loads[i] += particleWeight + looseOverburden(i, particleWeight) + state.externalLoad[i];
+    const parent = bestSupportParent(i, distances);
     const bending = bendingPenalty(i, distances);
     const bearing = bearingPenalty(i);
     state.stress[i] = (loads[i] * (1 + bending + bearing)) / supportRelief(i);
 
-    if (parents[i] >= 0) {
-      loads[parents[i]] += loads[i];
+    if (parent >= 0) {
+      loads[parent] += loads[i];
     }
   }
 
   for (const i of cluster) {
     const stress = state.stress[i];
-    const threshold = controls.cohesion.value;
     if (stress > threshold) {
       const excess = (stress - threshold) / Math.max(threshold, 1);
-      state.damage[i] += controls.fatigue.value * excess;
+      state.damage[i] += fatigue * excess;
     } else {
       state.damage[i] *= 0.82;
     }
@@ -950,13 +1187,13 @@ function routeClusterLoad(cluster, distances) {
   }
 }
 
-function looseOverburden(i) {
+function looseOverburden(i, particleWeight) {
   const x = i % state.width;
   const y = Math.floor(i / state.width);
   let load = 0;
   for (let yy = y - 1; yy >= 0 && yy >= y - 8; yy--) {
     const above = index(x, yy);
-    if (state.cells[above] === LOOSE) load += controls.weight.value * 0.55;
+    if (state.cells[above] === LOOSE) load += particleWeight * 0.55;
     if (state.cells[above] === EMPTY) break;
   }
   return load;
@@ -967,14 +1204,10 @@ function bestSupportParent(i, distances) {
   const y = Math.floor(i / state.width);
   let best = -1;
   let bestDistance = distances[i];
-  const candidates = [
-    [x, y + 1],
-    [x - 1, y],
-    [x + 1, y],
-    [x, y - 1],
-  ];
 
-  for (const [nx, ny] of candidates) {
+  for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
     if (!inBounds(nx, ny)) continue;
     const ni = index(nx, ny);
     if (state.cells[ni] !== PACKED) continue;
@@ -1004,12 +1237,10 @@ function bearingPenalty(i) {
   const x = i % state.width;
   const y = Math.floor(i / state.width);
   let incoming = 0;
-  const neighbors = [
-    [x - 1, y],
-    [x + 1, y],
-    [x, y - 1],
-  ];
-  for (const [nx, ny] of neighbors) {
+
+  for (const [dx, dy] of BEARING_NEIGHBOR_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
     if (!inBounds(nx, ny)) continue;
     const ni = index(nx, ny);
     if (state.cells[ni] === PACKED) incoming++;
@@ -1024,15 +1255,10 @@ function supportRelief(i) {
   if (hasRigidSupport(i)) return 5;
 
   let relief = 1;
-  const supports = [
-    [x, y + 1, 1.7],
-    [x - 1, y + 1, 0.65],
-    [x + 1, y + 1, 0.65],
-    [x - 1, y, 0.35],
-    [x + 1, y, 0.35],
-  ];
 
-  for (const [nx, ny, value] of supports) {
+  for (const [dx, dy, value] of SUPPORT_RELIEF_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
     if (!inBounds(nx, ny)) continue;
     const support = index(nx, ny);
     if (state.cells[support] === PACKED || state.rigid[support]) relief += value;
@@ -1042,27 +1268,14 @@ function supportRelief(i) {
 }
 
 function render() {
-  const wrap = canvas.parentElement.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  const simAspect = state.width / state.height;
-  const wrapAspect = wrap.width / wrap.height;
-  const cssWidth = Math.max(1, Math.floor(wrapAspect > simAspect ? wrap.height * simAspect : wrap.width));
-  const cssHeight = Math.max(1, Math.floor(wrapAspect > simAspect ? wrap.height : wrap.width / simAspect));
-  const nextWidth = Math.max(1, Math.floor(cssWidth * ratio));
-  const nextHeight = Math.max(1, Math.floor(cssHeight * ratio));
-  canvas.style.width = `${cssWidth}px`;
-  canvas.style.height = `${cssHeight}px`;
-  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
-    canvas.width = nextWidth;
-    canvas.height = nextHeight;
-  }
+  syncCanvasLayout();
 
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = "#2a2d29";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const cellW = canvas.width / state.width;
-  const cellH = canvas.height / state.height;
+  const cellW = canvasLayout.cellW;
+  const cellH = canvasLayout.cellH;
   const showStress = controls.stressView.checked;
   const showDamage = controls.damageView.checked;
   const showPackedContours = controls.contourView.checked;
@@ -1673,202 +1886,1175 @@ function destroyPhysicsBody(body) {
 
 function vehicleStartPosition() {
   const terrainTop = Math.floor(state.height * 2 / 3);
-  const vehicleClearance = VEHICLE_WHEEL_Y_OFFSET + VEHICLE_WHEEL_RADIUS + 2;
+  const vehicleClearance = 6.2;
   return {
-    x: Math.max(12, Math.min(state.width - 12, Math.floor(state.width * 0.4))),
+    x: Math.max(18, Math.min(state.width - 18, Math.floor(state.width * 0.36))),
     y: Math.max(10, Math.min(state.height - 10, Math.floor(terrainTop - vehicleClearance))),
   };
 }
 
 function resetPhysicsVehicle() {
-  destroyPhysicsBody(physicsChassisBody);
-  destroyPhysicsBody(physicsLeftWheelBody);
-  destroyPhysicsBody(physicsRightWheelBody);
-
-  physicsLeftWheelJoint = null;
-  physicsRightWheelJoint = null;
-
+  destroyExcavator(physicsExcavator);
   const start = vehicleStartPosition();
-  physicsChassisBody = physicsWorld.createDynamicBody({
-    position: Vec2(start.x, start.y),
-    angularDamping: 1.2,
+  physicsExcavator = createExcavator(Vec2(start.x, start.y), EXCAVATOR_FACING_RIGHT);
+  sharedWheelSpeed = 0;
+  desiredDrive = 0;
+  pointerArmControl.deltaLocal = Vec2(0, 0);
+}
+
+function createExcavator(position, facing = EXCAVATOR_FACING_RIGHT, savedState = {}) {
+  const direction = facing === EXCAVATOR_FACING_LEFT ? EXCAVATOR_FACING_LEFT : EXCAVATOR_FACING_RIGHT;
+  const chassis = physicsWorld.createDynamicBody({
+    type: "dynamic",
+    position,
+    angle: savedState.angle ?? 0,
+    angularDamping: 0.85,
     linearDamping: 0.12,
+    bullet: true,
   });
-  physicsChassisBody.createFixture({
-    shape: Box(VEHICLE_CHASSIS_HALF_WIDTH, VEHICLE_CHASSIS_HALF_HEIGHT),
-    density: VEHICLE_CHASSIS_DENSITY,
-    friction: 0.6,
-    restitution: 0.05,
+  chassis.setUserData({ kind: "excavator", part: "chassis" });
+
+  chassis.createFixture({
+    shape: Polygon(mirrorSourceVertices([
+      Vec2(-2.72, -0.5),
+      Vec2(-2.24, -0.82),
+      Vec2(2.36, -0.82),
+      Vec2(2.82, -0.5),
+      Vec2(2.58, 0.58),
+      Vec2(-2.52, 0.64),
+    ], direction)),
+    density: EXCAVATOR_CHASSIS_DENSITY,
+    friction: 0.75,
+    restitution: 0,
+    filterGroupIndex: EXCAVATOR_COLLISION_GROUP,
+  });
+  chassis.createFixture({
+    shape: Polygon(mirrorSourceVertices([
+      Vec2(-2.1, 0.52),
+      Vec2(2.25, 0.5),
+      Vec2(2.38, 1.18),
+      Vec2(1.2, 2.74),
+      Vec2(-0.8, 3.16),
+      Vec2(-2.06, 1.46),
+    ], direction)),
+    density: EXCAVATOR_CHASSIS_DENSITY * 0.16,
+    friction: 0.7,
+    restitution: 0,
+    filterGroupIndex: EXCAVATOR_COLLISION_GROUP,
   });
 
-  physicsLeftWheelBody = physicsWorld.createDynamicBody({
-    position: Vec2(start.x - 4.2, start.y + VEHICLE_WHEEL_Y_OFFSET),
-    angularDamping: 0.15,
-  });
-  physicsLeftWheelBody.createFixture({
-    shape: Circle(VEHICLE_WHEEL_RADIUS),
-    density: VEHICLE_WHEEL_DENSITY,
-    friction: VEHICLE_TIRE_FRICTION,
-    restitution: 0.02,
-  });
+  const wheels = [];
+  const wheelJoints = [];
+  const linkJoints = [];
+  const radius = 0.38 * EXCAVATOR_SCALE;
 
-  physicsRightWheelBody = physicsWorld.createDynamicBody({
-    position: Vec2(start.x + 4.2, start.y + VEHICLE_WHEEL_Y_OFFSET),
-    angularDamping: 0.15,
-  });
-  physicsRightWheelBody.createFixture({
-    shape: Circle(VEHICLE_WHEEL_RADIUS),
-    density: VEHICLE_WHEEL_DENSITY,
-    friction: VEHICLE_TIRE_FRICTION,
-    restitution: 0.02,
-  });
+  for (const local of makeTreadLoop(direction)) {
+    const wheel = physicsWorld.createDynamicBody({
+      position: chassis.getWorldPoint(local),
+      angularDamping: 0.12,
+      linearDamping: 0.05,
+      bullet: true,
+    });
+    wheel.setUserData({ kind: "excavator", part: "wheel" });
+    wheel.createFixture({
+      shape: Circle(radius),
+      density: EXCAVATOR_WHEEL_DENSITY,
+      friction: EXCAVATOR_WHEEL_FRICTION,
+      restitution: 0,
+      filterGroupIndex: EXCAVATOR_COLLISION_GROUP,
+    });
+    wheels.push({ body: wheel, local, radius });
 
-  const jointOptions = {
-    enableMotor: false,
-    maxMotorTorque: VEHICLE_MOTOR_TORQUE,
-    motorSpeed: 0,
-    frequencyHz: VEHICLE_SUSPENSION_FREQUENCY,
-    dampingRatio: VEHICLE_SUSPENSION_DAMPING,
-  };
-
-  physicsLeftWheelJoint = physicsWorld.createJoint(WheelJoint(
-    jointOptions,
-    physicsChassisBody,
-    physicsLeftWheelBody,
-    physicsLeftWheelBody.getPosition(),
-    Vec2(0, 1),
-  ));
-  physicsRightWheelJoint = physicsWorld.createJoint(WheelJoint(
-    jointOptions,
-    physicsChassisBody,
-    physicsRightWheelBody,
-    physicsRightWheelBody.getPosition(),
-    Vec2(0, 1),
-  ));
-}
-
-function updateVehicleMotor() {
-  const drive = Number(isDrivingRight) - Number(isDrivingLeft);
-  const motorSpeed = drive * VEHICLE_MOTOR_SPEED;
-  const leftGrounded = isWheelGrounded(physicsLeftWheelBody);
-  const rightGrounded = isWheelGrounded(physicsRightWheelBody);
-  const hasThrottle = drive !== 0;
-
-  physicsLeftWheelJoint?.enableMotor(leftGrounded && hasThrottle);
-  physicsRightWheelJoint?.enableMotor(rightGrounded && hasThrottle);
-  physicsLeftWheelJoint?.setMotorSpeed(leftGrounded ? motorSpeed : 0);
-  physicsRightWheelJoint?.setMotorSpeed(rightGrounded ? motorSpeed : 0);
-}
-
-function isWheelGrounded(wheelBody) {
-  if (!wheelBody || !physicsTerrainBody) return false;
-
-  for (let edge = wheelBody.getContactList(); edge; edge = edge.next) {
-    if (edge.other === physicsTerrainBody && edge.contact.isTouching()) return true;
+    wheelJoints.push(physicsWorld.createJoint(WheelJoint({
+      enableMotor: true,
+      motorSpeed: 0,
+      maxMotorTorque: EXCAVATOR_MOTOR_TORQUE,
+      frequencyHz: EXCAVATOR_SUSPENSION_FREQUENCY,
+      dampingRatio: EXCAVATOR_SUSPENSION_DAMPING,
+    }, chassis, wheel, wheel.getPosition(), Vec2(0, 1))));
   }
 
-  return false;
+  for (let i = 0; i < wheels.length; i++) {
+    const a = wheels[i].body;
+    const b = wheels[(i + 1) % wheels.length].body;
+    const length = vecDistance(a.getPosition(), b.getPosition());
+    linkJoints.push(physicsWorld.createJoint(DistanceJoint({
+      frequencyHz: EXCAVATOR_TREAD_LINK_FREQUENCY,
+      dampingRatio: 0.85,
+      collideConnected: false,
+      length,
+    }, a, b, a.getPosition(), b.getPosition())));
+  }
+
+  return {
+    facing: direction,
+    chassis,
+    wheels,
+    wheelJoints,
+    linkJoints,
+    arm: createExcavatorArm(chassis, direction, savedState.arm),
+    tail: createExcavatorTail(chassis, direction, savedState.tail),
+    chassisArtPivotLocal: sourceLocal(0.52, 2.78, direction),
+    radius,
+    drivePhase: savedState.drivePhase ?? 0,
+  };
 }
 
 function normalizeAngle(angle) {
   return Math.atan2(Math.sin(angle), Math.cos(angle));
 }
 
-function flipVehicleUpright() {
-  if (!physicsChassisBody) return;
+function createExcavatorArm(chassis, facing = EXCAVATOR_FACING_RIGHT, savedState = {}) {
+  const boomLength = svgDistance(excavatorSvg.boom.pivot, excavatorSvg.boom.end) * EXCAVATOR_ART_SCALE;
+  const stickLength = svgDistance(excavatorSvg.stick.pivot, excavatorSvg.stick.end) * EXCAVATOR_ART_SCALE;
+  const headLength = (excavatorSvg.headTop.viewBox.width - excavatorSvg.headTop.pivot.x - 18) * EXCAVATOR_HEAD_JAW_ART_SCALE;
+  const targetPose = savedState?.targetPose ?? orientArmPoseForFacing({
+    boomAngle: -1.05,
+    stickAngle: 1.22,
+    headAngle: 0.5,
+    jawAngle: EXCAVATOR_JAW_CLOSED_ANGLE,
+  }, facing);
+  const arm = {
+    chassis,
+    facing,
+    baseLocal: sourceLocal(0.97, 2.33, facing),
+    boomLength,
+    stickLength,
+    headLength,
+    headTipOffset: Vec2(headLength * 0.9 * facing, 0.56 * EXCAVATOR_SCALE),
+    boomWidth: 0.42 * EXCAVATOR_SCALE,
+    stickWidth: 0.4 * EXCAVATOR_SCALE,
+    jawOpenAngle: EXCAVATOR_JAW_OPEN_ANGLE * facing,
+    jawClosedAngle: EXCAVATOR_JAW_CLOSED_ANGLE * facing,
+    forwardLimits: createArmLimits(EXCAVATOR_FACING_RIGHT),
+    limits: createArmLimits(facing),
+    motorTorque: {
+      boomAngle: 18000,
+      stickAngle: 14500,
+      headAngle: 8200,
+      jawAngle: 5200,
+    },
+    targetWorld: null,
+    directTargetLocal: null,
+    desiredHeadAbs: null,
+    directLimit: false,
+    targetPose,
+  };
 
-  const angle = normalizeAngle(physicsChassisBody.getAngle());
+  const initialPoints = getArmLocalPointsForPose(arm, arm.targetPose);
+  const boomBody = createArmSegmentBody(
+    chassis,
+    segmentCenter(initialPoints.base, initialPoints.elbow),
+    arm.targetPose.boomAngle,
+    arm.boomLength,
+    arm.boomWidth,
+    0.2,
+    "boom",
+  );
+  const stickBody = createArmSegmentBody(
+    chassis,
+    segmentCenter(initialPoints.elbow, initialPoints.wrist),
+    initialPoints.stickAbs,
+    arm.stickLength,
+    arm.stickWidth,
+    0.18,
+    "stick",
+  );
+  const headTopBody = createHeadBody(chassis, initialPoints.wrist, initialPoints.headAbs, facing, headLength);
+  const jawBottomBody = createJawBody(chassis, initialPoints.wrist, initialPoints.headAbs + arm.targetPose.jawAngle, facing, headLength);
+
+  arm.bodies = {
+    boom: boomBody,
+    stick: stickBody,
+    headTop: headTopBody,
+    jawBottom: jawBottomBody,
+  };
+  arm.joints = {
+    boomAngle: createArmJoint(chassis, boomBody, chassis.getWorldPoint(initialPoints.base), arm.limits.boomAngle, arm.motorTorque.boomAngle),
+    stickAngle: createArmJoint(boomBody, stickBody, chassis.getWorldPoint(initialPoints.elbow), arm.limits.stickAngle, arm.motorTorque.stickAngle),
+    headAngle: createArmJoint(stickBody, headTopBody, chassis.getWorldPoint(initialPoints.wrist), arm.limits.headAngle, arm.motorTorque.headAngle),
+    jawAngle: createArmJoint(headTopBody, jawBottomBody, chassis.getWorldPoint(initialPoints.wrist), arm.limits.jawAngle, arm.motorTorque.jawAngle),
+  };
+
+  arm.workspaceSample = sampleArmWorkspace(arm, 0.06);
+  arm.workspaceBounds = getWorkspaceBounds(arm.workspaceSample);
+  arm.directTargetLocal = savedState?.directTargetLocal
+    ? Vec2(savedState.directTargetLocal.x, savedState.directTargetLocal.y)
+    : Vec2(initialPoints.wrist.x, initialPoints.wrist.y);
+  arm.desiredHeadAbs = savedState?.desiredHeadAbs ?? initialPoints.headAbs;
+  arm.targetWorld = chassis.getWorldPoint(arm.directTargetLocal);
+
+  return arm;
+}
+
+function createArmLimits(facing) {
+  const rightLimits = {
+    boomAngle: [-2.05, 0.65],
+    stickAngle: [-1.42, 2.72],
+    headAngle: [-1.05, 1.45],
+    jawAngle: [-0.28, 0.58],
+  };
+
+  if (facing === EXCAVATOR_FACING_RIGHT) return rightLimits;
+  return Object.fromEntries(Object.entries(rightLimits).map(([key, [min, max]]) => [
+    key,
+    [-max, -min],
+  ]));
+}
+
+function orientArmPoseForFacing(pose, facing) {
+  return {
+    boomAngle: pose.boomAngle * facing,
+    stickAngle: pose.stickAngle * facing,
+    headAngle: pose.headAngle * facing,
+    jawAngle: pose.jawAngle * facing,
+  };
+}
+
+function createExcavatorTail(chassis, facing = EXCAVATOR_FACING_RIGHT, savedState = {}) {
+  return {
+    chassis,
+    facing,
+    localPivot: sourceLocal(-1.84, 0.72, facing),
+    baseAngle: Math.PI / 4,
+    offset: savedState?.offset ?? 0,
+    velocity: savedState?.velocity ?? 0,
+  };
+}
+
+function createArmSegmentBody(chassis, centerLocal, angleLocal, length, width, density, part) {
+  const body = physicsWorld.createDynamicBody({
+    position: chassis.getWorldPoint(centerLocal),
+    angle: chassis.getAngle() + angleLocal,
+    angularDamping: 1.8,
+    linearDamping: 0.35,
+    bullet: true,
+  });
+  body.setUserData({ kind: "excavator", part });
+  body.createFixture({
+    shape: Box(length * 0.5, width * 0.5),
+    density: density * 0.75,
+    friction: 0.85,
+    restitution: 0,
+    filterGroupIndex: EXCAVATOR_COLLISION_GROUP,
+  });
+  return body;
+}
+
+function createHeadBody(chassis, wristLocal, angleLocal, facing, headLength) {
+  const body = physicsWorld.createDynamicBody({
+    position: chassis.getWorldPoint(wristLocal),
+    angle: chassis.getAngle() + angleLocal,
+    angularDamping: 5.2,
+    linearDamping: 0.82,
+    bullet: true,
+  });
+  body.setUserData({ kind: "excavator", part: "headTop" });
+  body.createFixture({
+    shape: Polygon(getHeadTopLocalVertices(headLength, facing)),
+    density: 0.035,
+    friction: 0.92,
+    restitution: 0.01,
+    filterGroupIndex: EXCAVATOR_COLLISION_GROUP,
+  });
+  return body;
+}
+
+function createJawBody(chassis, wristLocal, angleLocal, facing, headLength) {
+  const body = physicsWorld.createDynamicBody({
+    position: chassis.getWorldPoint(wristLocal),
+    angle: chassis.getAngle() + angleLocal,
+    angularDamping: 5.8,
+    linearDamping: 0.88,
+    bullet: true,
+  });
+  body.setUserData({ kind: "excavator", part: "jawBottom" });
+  body.createFixture({
+    shape: Polygon(getJawBottomLocalVertices(headLength, facing)),
+    density: 0.03,
+    friction: 0.95,
+    restitution: 0.01,
+    filterGroupIndex: EXCAVATOR_COLLISION_GROUP,
+  });
+  return body;
+}
+
+function getHeadTopLocalVertices(length, facing = EXCAVATOR_FACING_RIGHT) {
+  return mirrorDirtVertices([
+    Vec2(-0.06 * EXCAVATOR_SCALE, -0.24 * EXCAVATOR_SCALE),
+    Vec2(0.38 * EXCAVATOR_SCALE, 0.92 * EXCAVATOR_SCALE),
+    Vec2(length * 0.58, 1.18 * EXCAVATOR_SCALE),
+    Vec2(length, 0.44 * EXCAVATOR_SCALE),
+    Vec2(length * 0.95, -0.22 * EXCAVATOR_SCALE),
+    Vec2(0.42 * EXCAVATOR_SCALE, -0.44 * EXCAVATOR_SCALE),
+  ], facing);
+}
+
+function getJawBottomLocalVertices(length, facing = EXCAVATOR_FACING_RIGHT) {
+  return mirrorDirtVertices([
+    Vec2(-0.05 * EXCAVATOR_SCALE, 0.12 * EXCAVATOR_SCALE),
+    Vec2(0.58 * EXCAVATOR_SCALE, 0.22 * EXCAVATOR_SCALE),
+    Vec2(length, -0.42 * EXCAVATOR_SCALE),
+    Vec2(length * 0.92, -1.3 * EXCAVATOR_SCALE),
+    Vec2(0.48 * EXCAVATOR_SCALE, -1.12 * EXCAVATOR_SCALE),
+    Vec2(-0.08 * EXCAVATOR_SCALE, -0.16 * EXCAVATOR_SCALE),
+  ], facing);
+}
+
+function createArmJoint(parent, child, anchorWorld, limits, maxMotorTorque) {
+  return physicsWorld.createJoint(RevoluteJoint({
+    referenceAngle: 0,
+    enableLimit: true,
+    lowerAngle: limits[0],
+    upperAngle: limits[1],
+    enableMotor: true,
+    motorSpeed: 0,
+    maxMotorTorque,
+    collideConnected: false,
+  }, parent, child, anchorWorld));
+}
+
+function sourceLocal(x, y, facing = EXCAVATOR_FACING_RIGHT) {
+  return Vec2(x * EXCAVATOR_SCALE * facing, -y * EXCAVATOR_SCALE);
+}
+
+function mirrorSourceVertices(vertices, facing) {
+  const converted = vertices.map((vertex) => sourceLocal(vertex.x, vertex.y, facing));
+  return facing === EXCAVATOR_FACING_RIGHT ? converted : converted.reverse();
+}
+
+function mirrorDirtVertices(vertices, facing) {
+  const converted = vertices.map((vertex) => Vec2(vertex.x * facing, -vertex.y));
+  return facing === EXCAVATOR_FACING_RIGHT ? converted : converted.reverse();
+}
+
+function makeTreadLoop(facing = EXCAVATOR_FACING_RIGHT) {
+  const points = [];
+  const halfLength = 2.45;
+  const topY = -0.34;
+  const bottomY = -1.16;
+  const endRadius = (topY - bottomY) * 0.5;
+  const centerY = (topY + bottomY) * 0.5;
+
+  for (let i = 0; i < 7; i++) {
+    const t = i / 6;
+    points.push(sourceLocal(-halfLength + t * halfLength * 2, bottomY, facing));
+  }
+
+  for (let i = 2; i <= 4; i += 2) {
+    const theta = -Math.PI / 2 + (i / 5) * Math.PI;
+    points.push(sourceLocal(halfLength + Math.cos(theta) * endRadius, centerY + Math.sin(theta) * endRadius, facing));
+  }
+
+  for (let i = 1; i < 7; i++) {
+    const t = i / 6;
+    points.push(sourceLocal(halfLength - t * halfLength * 2, topY, facing));
+  }
+
+  for (let i = 2; i <= 4; i += 2) {
+    const theta = Math.PI / 2 + (i / 5) * Math.PI;
+    points.push(sourceLocal(-halfLength + Math.cos(theta) * endRadius, centerY + Math.sin(theta) * endRadius, facing));
+  }
+
+  return points;
+}
+
+function segmentCenter(a, b) {
+  return Vec2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+}
+
+function svgDistance(a, b) {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function svgPivotAngle(a, b) {
+  return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+function vecDistance(a, b) {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function updateVehicleMotor(dt) {
+  if (!physicsExcavator) return;
+
+  pollJoypad();
+  desiredDrive = getDriveInput();
+  const targetSpeed = desiredDrive * EXCAVATOR_DRIVE_SPEED;
+  const driveSign = Math.sign(targetSpeed);
+
+  if (driveSign === 0) {
+    sharedWheelSpeed *= Math.pow(0.025, dt);
+  } else {
+    sharedWheelSpeed += (targetSpeed - sharedWheelSpeed) * Math.min(1, dt * 3.8);
+    const signedSpeeds = physicsExcavator.wheels.map((wheel) => wheel.body.getAngularVelocity() * driveSign);
+    const slowest = Math.min(...signedSpeeds);
+    const lockedLimit = Math.max(0, slowest + 2.2);
+    const signedTarget = Math.abs(sharedWheelSpeed);
+    if (signedTarget > lockedLimit) sharedWheelSpeed = driveSign * lockedLimit;
+  }
+
+  for (const joint of physicsExcavator.wheelJoints) {
+    joint.setMotorSpeed(sharedWheelSpeed);
+    joint.setMaxMotorTorque(EXCAVATOR_MOTOR_TORQUE);
+  }
+
+  const averageSpin = physicsExcavator.wheels.reduce((sum, wheel) => sum + wheel.body.getAngularVelocity(), 0) / physicsExcavator.wheels.length;
+  physicsExcavator.drivePhase += averageSpin * physicsExcavator.radius * dt * 1.15;
+  updateArm(dt);
+  updateTail(dt);
+}
+
+function getDriveInput() {
+  if (joypad.active && Math.abs(joypad.drive) > 0) return joypad.drive;
+  return Number(isDrivingRight) - Number(isDrivingLeft);
+}
+
+function updateArm(dt) {
+  const arm = physicsExcavator?.arm;
+  if (!arm) return;
+
+  ensureDirectArmTarget(arm);
+  clampDesiredHeadAbsToCurrentPose(arm);
+  updateDirectHeadTarget(arm, dt);
+
+  const jawAngle = joypad.jawOpen ? arm.jawOpenAngle : arm.jawClosedAngle;
+  const blockedByInput = moveDirectArmTarget(arm, dt, jawAngle);
+  const solved = solveDirectArmPose(arm, arm.directTargetLocal, jawAngle);
+
+  if (solved) {
+    arm.targetPose = solved;
+    clampDesiredHeadAbsToPose(arm, arm.targetPose);
+    arm.directLimit = blockedByInput;
+  } else {
+    arm.targetPose = { ...arm.targetPose, jawAngle };
+    clampDesiredHeadAbsToCurrentPose(arm);
+    arm.directLimit = true;
+  }
+
+  driveArmJoints(arm, arm.targetPose);
+  arm.targetWorld = arm.chassis.getWorldPoint(arm.directTargetLocal);
+}
+
+function ensureDirectArmTarget(arm) {
+  if (arm.directTargetLocal && arm.desiredHeadAbs != null) return;
+
+  const points = getArmLocalPoints(arm);
+  arm.directTargetLocal = Vec2(points.wrist.x, points.wrist.y);
+  arm.desiredHeadAbs = clampHeadAbsToPoseLimits(arm, points.headAbs, getArmJointAngles(arm));
+  arm.targetWorld = arm.chassis.getWorldPoint(arm.directTargetLocal);
+}
+
+function updateDirectHeadTarget(arm, dt) {
+  const headTurn = getCombinedHeadTurn();
+  if (!headTurn) return;
+  arm.desiredHeadAbs = clampHeadAbsToPoseLimits(
+    arm,
+    normalizeAngle(arm.desiredHeadAbs + headTurn * EXCAVATOR_DIRECT_HEAD_TURN_SPEED * getPrecisionScale() * dt),
+    getArmJointAngles(arm),
+  );
+}
+
+function moveDirectArmTarget(arm, dt, jawAngle) {
+  const keyboardVector = getKeyboardArmVector();
+  const armX = keyboardVector.x + joypad.armX;
+  const armY = keyboardVector.y + joypad.armY;
+  const stickMagnitude = Math.hypot(armX, armY);
+  const pointerDelta = pointerArmControl.deltaLocal;
+  pointerArmControl.deltaLocal = Vec2(0, 0);
+
+  if (stickMagnitude <= 0 && Math.hypot(pointerDelta.x, pointerDelta.y) <= 0) return false;
+
+  const scale = Math.min(1, stickMagnitude);
+  const worldDelta = Vec2(
+    stickMagnitude > 0 ? (armX / stickMagnitude) * scale * EXCAVATOR_DIRECT_TARGET_SPEED * getPrecisionScale() * dt : 0,
+    stickMagnitude > 0 ? (armY / stickMagnitude) * scale * EXCAVATOR_DIRECT_TARGET_SPEED * getPrecisionScale() * dt : 0,
+  );
+  const stickDelta = rotateVec(worldDelta, -physicsExcavator.chassis.getAngle());
+  const dx = stickDelta.x + pointerDelta.x;
+  const dy = stickDelta.y + pointerDelta.y;
+  const current = arm.directTargetLocal;
+  const fullMove = Vec2(current.x + dx, current.y + dy);
+
+  if (trySetDirectArmTarget(arm, fullMove, jawAngle)) return false;
+
+  const xOnly = Vec2(current.x + dx, current.y);
+  const yOnly = Vec2(current.x, current.y + dy);
+  const first = Math.abs(dx) >= Math.abs(dy) ? xOnly : yOnly;
+  const second = first === xOnly ? yOnly : xOnly;
+
+  if (trySetDirectArmTarget(arm, first, jawAngle)) return false;
+  if (trySetDirectArmTarget(arm, second, jawAngle)) return false;
+  return true;
+}
+
+function getKeyboardArmVector() {
+  let x = 0;
+  let y = 0;
+  if (activeKeys.has("KeyJ")) x -= 1;
+  if (activeKeys.has("KeyL")) x += 1;
+  if (activeKeys.has("KeyI") || activeKeys.has("KeyW")) y -= 1;
+  if (activeKeys.has("KeyK") || activeKeys.has("KeyS")) y += 1;
+  const magnitude = Math.hypot(x, y);
+  if (magnitude <= 1) return Vec2(x, y);
+  return Vec2(x / magnitude, y / magnitude);
+}
+
+function trySetDirectArmTarget(arm, targetLocal, jawAngle) {
+  const clamped = clampArmTargetToWorkspace(arm, targetLocal);
+  const solved = solveDirectArmPose(arm, clamped, jawAngle);
+  if (!solved) return false;
+  arm.directTargetLocal = clamped;
+  arm.targetPose = solved;
+  clampDesiredHeadAbsToPose(arm, solved);
+  arm.directLimit = false;
+  return true;
+}
+
+function clampDesiredHeadAbsToCurrentPose(arm) {
+  arm.desiredHeadAbs = clampHeadAbsToPoseLimits(arm, arm.desiredHeadAbs, getArmJointAngles(arm));
+}
+
+function clampDesiredHeadAbsToPose(arm, pose) {
+  arm.desiredHeadAbs = clampHeadAbsToPoseLimits(arm, arm.desiredHeadAbs, pose);
+}
+
+function clampHeadAbsToPoseLimits(arm, targetHeadAbs, pose) {
+  const stickAbs = normalizeAngle(pose.boomAngle + pose.stickAngle);
+  const [headMin, headMax] = arm.limits.headAngle;
+  const localHead = clamp(normalizeAngle(targetHeadAbs - stickAbs), headMin, headMax);
+  return normalizeAngle(stickAbs + localHead);
+}
+
+function clampArmTargetToWorkspace(arm, targetLocal) {
+  const bounds = arm.workspaceBounds;
+  if (!bounds) return targetLocal;
+  return Vec2(
+    clamp(targetLocal.x, bounds.minX, bounds.maxX),
+    clamp(targetLocal.y, bounds.minY, bounds.maxY),
+  );
+}
+
+function solveDirectArmPose(arm, targetLocal, jawAngle) {
+  return findBestArmPose(arm, targetLocal, {
+    headAbs: arm.desiredHeadAbs,
+    jawAngle,
+  });
+}
+
+function getCombinedHeadTurn() {
+  return joypad.headTurn +
+    (activeKeys.has("KeyQ") ? -1 : 0) +
+    (activeKeys.has("KeyE") ? 1 : 0);
+}
+
+function getPrecisionScale() {
+  return activeKeys.has("ShiftLeft") || activeKeys.has("ShiftRight") ? 0.35 : 1;
+}
+
+function driveArmJoints(arm, pose) {
+  driveArmJoint(arm, "boomAngle", pose.boomAngle);
+  driveArmJoint(arm, "stickAngle", pose.stickAngle);
+  driveArmJoint(arm, "headAngle", pose.headAngle);
+  driveArmJoint(arm, "jawAngle", pose.jawAngle);
+}
+
+function driveArmJoint(arm, key, target) {
+  const joint = arm.joints[key];
+  const servo = EXCAVATOR_ARM_SERVO[key];
+  const error = normalizeAngle(target - joint.getJointAngle());
+  const damping = joint.getJointSpeed() * servo.damping;
+  const maxSpeed = EXCAVATOR_ARM_SPEED * servo.speedScale;
+  const motorSpeed = clamp(error * EXCAVATOR_ARM_SPEED * servo.gain - damping, -maxSpeed, maxSpeed);
+  joint.setMaxMotorTorque(arm.motorTorque[key]);
+  joint.setMotorSpeed(Math.abs(error) < 0.01 ? 0 : motorSpeed);
+}
+
+function findBestArmPose(arm, wristLocal, options = {}) {
+  const candidates = findArmIKCandidates(arm, wristLocal, options);
+  return candidates[0]?.pose ?? null;
+}
+
+function findArmIKCandidates(arm, wristLocal, options = {}) {
+  const current = getArmJointAngles(arm);
+  const candidates = [];
+  const desiredHeadAbs = options.headAbs ?? normalizeAngle(current.boomAngle + current.stickAngle + current.headAngle);
+  const desiredHeadForward = normalizeAngle(desiredHeadAbs * arm.facing);
+  const jawAngleForward = clamp(
+    (options.jawAngle ?? current.jawAngle ?? arm.jawClosedAngle) * arm.facing,
+    arm.forwardLimits.jawAngle[0],
+    arm.forwardLimits.jawAngle[1],
+  );
+  const dx = (wristLocal.x - arm.baseLocal.x) * arm.facing;
+  const dy = wristLocal.y - arm.baseLocal.y;
+  const l1 = arm.boomLength;
+  const l2 = arm.stickLength;
+  const distance = Math.hypot(dx, dy);
+  const minReach = Math.abs(l1 - l2) + 0.04 * EXCAVATOR_SCALE;
+  const maxReach = l1 + l2 - 0.04 * EXCAVATOR_SCALE;
+  if (distance < minReach || distance > maxReach) return candidates;
+
+  const theta = Math.atan2(dy, dx);
+  const elbowMagnitude = Math.acos(clamp((distance * distance - l1 * l1 - l2 * l2) / (2 * l1 * l2), -1, 1));
+  for (const stickAngle of [elbowMagnitude, -elbowMagnitude]) {
+    const boomAngle = normalizeAngle(theta - Math.atan2(l2 * Math.sin(stickAngle), l1 + l2 * Math.cos(stickAngle)));
+    const stickAngleLocal = normalizeAngle(stickAngle);
+    const idealHeadAngle = normalizeAngle(desiredHeadForward - boomAngle - stickAngleLocal);
+    const headAngle = clamp(idealHeadAngle, arm.forwardLimits.headAngle[0], arm.forwardLimits.headAngle[1]);
+    const pose = orientArmPoseForFacing({
+      boomAngle,
+      stickAngle: stickAngleLocal,
+      headAngle,
+      jawAngle: jawAngleForward,
+    }, arm.facing);
+    if (!isArmPoseValid(arm, pose)) continue;
+    candidates.push({
+      pose,
+      score: scoreArmCandidate(arm, pose, current, desiredHeadAbs),
+    });
+  }
+
+  candidates.sort((a, b) => a.score - b.score);
+  return candidates;
+}
+
+function isArmPoseValid(arm, pose) {
+  if (!isArmPoseWithinLimits(arm, pose, 0)) return false;
+  const points = getArmLocalPointsForPose(arm, pose);
+  if (points.wrist.x * arm.facing < -2.6 * EXCAVATOR_SCALE || points.tip.x * arm.facing < -2.8 * EXCAVATOR_SCALE) return false;
+  if (vecDistance(points.wrist, points.base) < 0.42 * EXCAVATOR_SCALE) return false;
+  return true;
+}
+
+function isArmPoseWithinLimits(arm, pose, margin = 0) {
+  return Object.entries(arm.limits).every(([key, [min, max]]) => (
+    pose[key] >= min + margin && pose[key] <= max - margin
+  ));
+}
+
+function scoreArmCandidate(arm, pose, current, desiredHeadAbs) {
+  const headAbs = normalizeAngle(pose.boomAngle + pose.stickAngle + pose.headAngle);
+  const continuity =
+    angleDelta(pose.boomAngle, current.boomAngle) * 1.1 +
+    angleDelta(pose.stickAngle, current.stickAngle) * 0.85 +
+    angleDelta(pose.headAngle, current.headAngle) * 0.42 +
+    angleDelta(pose.jawAngle, current.jawAngle) * 0.18;
+  const orientation = angleDelta(headAbs, desiredHeadAbs) * 0.9;
+  const speed =
+    Math.abs(arm.joints.boomAngle.getJointSpeed()) * 0.018 +
+    Math.abs(arm.joints.stickAngle.getJointSpeed()) * 0.014 +
+    Math.abs(arm.joints.headAngle.getJointSpeed()) * 0.008 +
+    Math.abs(arm.joints.jawAngle.getJointSpeed()) * 0.006;
+  const limitPenalty = Object.entries(arm.limits).reduce((sum, [key, [min, max]]) => {
+    const clearance = Math.min(pose[key] - min, max - pose[key]);
+    return sum + Math.max(0, 0.18 - clearance) * 1.8;
+  }, 0);
+
+  return continuity + orientation + speed + limitPenalty;
+}
+
+function sampleArmWorkspace(arm, step = 0.3) {
+  const samples = [];
+  const [boomMin, boomMax] = arm.limits.boomAngle;
+  const [stickMin, stickMax] = arm.limits.stickAngle;
+
+  for (let boomAngle = boomMin; boomAngle <= boomMax; boomAngle += step) {
+    for (let stickAngle = stickMin; stickAngle <= stickMax; stickAngle += step) {
+      const pose = { boomAngle, stickAngle, headAngle: arm.targetPose.headAngle, jawAngle: arm.jawClosedAngle };
+      if (isArmPoseValid(arm, pose)) samples.push(getArmLocalPointsForPose(arm, pose).wrist);
+    }
+  }
+
+  return samples;
+}
+
+function getWorkspaceBounds(samples) {
+  if (!samples.length) return null;
+  return samples.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x),
+    maxX: Math.max(bounds.maxX, point.x),
+    minY: Math.min(bounds.minY, point.y),
+    maxY: Math.max(bounds.maxY, point.y),
+  }), {
+    minX: Infinity,
+    maxX: -Infinity,
+    minY: Infinity,
+    maxY: -Infinity,
+  });
+}
+
+function rotateVec(v, angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return Vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+
+function angleDelta(a, b) {
+  return Math.abs(normalizeAngle(a - b));
+}
+
+function updateTail(dt) {
+  const tail = physicsExcavator?.tail;
+  if (!tail) return;
+
+  const driveTarget = clamp(-sharedWheelSpeed * 0.012 - physicsExcavator.chassis.getAngularVelocity() * 0.035, -0.18, 0.18);
+  const spring = (driveTarget - tail.offset) * 42;
+  const damping = tail.velocity * 8.5;
+  tail.velocity += (spring - damping) * dt;
+  tail.offset = clamp(tail.offset + tail.velocity * dt, -0.26, 0.26);
+}
+
+function pollJoypad() {
+  if (!joypad.supported) return;
+
+  const gamepads = navigator.getGamepads?.();
+  const gamepad = joypad.index != null && gamepads?.[joypad.index]?.connected
+    ? gamepads[joypad.index]
+    : Array.from(gamepads ?? []).find((candidate) => candidate?.connected);
+
+  if (!gamepad) {
+    joypad.connected = false;
+    joypad.index = null;
+    joypad.drive = 0;
+    joypad.armX = 0;
+    joypad.armY = 0;
+    joypad.headTurn = 0;
+    joypad.active = false;
+    joypad.lastAButton = false;
+    joypad.lastYButton = false;
+    return;
+  }
+
+  joypad.connected = true;
+  joypad.index = gamepad.index;
+  const leftX = applyStickDeadzone(gamepad.axes[0] ?? 0);
+  const rightX = applyStickDeadzone(gamepad.axes[2] ?? 0);
+  const rightY = applyStickDeadzone(gamepad.axes[3] ?? 0);
+  const aPressed = isGamepadButtonPressed(gamepad.buttons[0]);
+  const yPressed = isGamepadButtonPressed(gamepad.buttons[3]);
+  const leftBumper = isGamepadButtonPressed(gamepad.buttons[4]);
+  const rightBumper = isGamepadButtonPressed(gamepad.buttons[5]);
+
+  if (aPressed && !joypad.lastAButton) joypad.jawOpen = !joypad.jawOpen;
+  if (yPressed && !joypad.lastYButton) flipExcavatorFacing();
+
+  joypad.lastAButton = aPressed;
+  joypad.lastYButton = yPressed;
+  joypad.drive = leftX;
+  joypad.armX = rightX;
+  joypad.armY = rightY;
+  joypad.headTurn = (leftBumper ? -1 : 0) + (rightBumper ? 1 : 0);
+  joypad.active = (
+    Math.abs(leftX) > 0 ||
+    Math.abs(rightX) > 0 ||
+    Math.abs(rightY) > 0 ||
+    aPressed ||
+    yPressed ||
+    leftBumper ||
+    rightBumper
+  );
+}
+
+function applyStickDeadzone(value) {
+  const magnitude = Math.abs(value);
+  if (magnitude < EXCAVATOR_GAMEPAD_DEADZONE) return 0;
+  return Math.sign(value) * ((magnitude - EXCAVATOR_GAMEPAD_DEADZONE) / (1 - EXCAVATOR_GAMEPAD_DEADZONE));
+}
+
+function isGamepadButtonPressed(button) {
+  return Boolean(button && (button.pressed || button.value > 0.5));
+}
+
+function flipVehicleUpright() {
+  if (!physicsExcavator) return;
+
+  const angle = normalizeAngle(physicsExcavator.chassis.getAngle());
   const isOnBack = Math.cos(angle) < 0;
   if (!isOnBack) return;
 
-  const sideImpulse = (Math.random() * 2 - 1) * VEHICLE_FLIP_SIDE_IMPULSE;
-  const chassisCenter = physicsChassisBody.getWorldCenter();
+  const sideImpulse = (Math.random() * 2 - 1) * EXCAVATOR_FLIP_SIDE_IMPULSE;
+  const chassisCenter = physicsExcavator.chassis.getWorldCenter();
   const rotationDirection = angle >= 0 ? -1 : 1;
 
-  physicsChassisBody.applyLinearImpulse(Vec2(sideImpulse, -VEHICLE_FLIP_UPWARD_IMPULSE), chassisCenter, true);
-  physicsChassisBody.applyAngularImpulse(rotationDirection * VEHICLE_FLIP_ANGULAR_IMPULSE, true);
-  physicsLeftWheelBody?.applyLinearImpulse(Vec2(sideImpulse * 0.25, -VEHICLE_FLIP_UPWARD_IMPULSE * 0.35), physicsLeftWheelBody.getWorldCenter(), true);
-  physicsRightWheelBody?.applyLinearImpulse(Vec2(sideImpulse * 0.25, -VEHICLE_FLIP_UPWARD_IMPULSE * 0.35), physicsRightWheelBody.getWorldCenter(), true);
+  physicsExcavator.chassis.applyLinearImpulse(Vec2(sideImpulse, -EXCAVATOR_FLIP_UPWARD_IMPULSE), chassisCenter, true);
+  physicsExcavator.chassis.applyAngularImpulse(rotationDirection * EXCAVATOR_FLIP_ANGULAR_IMPULSE, true);
+  for (const body of getExcavatorBodies()) {
+    if (body === physicsExcavator.chassis) continue;
+    body.applyLinearImpulse(Vec2(sideImpulse * 0.12, -EXCAVATOR_FLIP_UPWARD_IMPULSE * 0.18), body.getWorldCenter(), true);
+  }
 }
 
 function stepPhysics(delta) {
   rebuildPhysicsTerrain();
-  updateVehicleMotor();
 
   physicsAccumulator += delta / 1000;
   let iterations = 0;
   while (physicsAccumulator >= PHYSICS_STEP_SECONDS && iterations < 5) {
+    updateVehicleMotor(PHYSICS_STEP_SECONDS);
     physicsWorld.step(PHYSICS_STEP_SECONDS, 8, 3);
     physicsAccumulator -= PHYSICS_STEP_SECONDS;
     iterations++;
   }
 
-  if (physicsChassisBody && physicsChassisBody.getPosition().y > state.height + 35) {
+  if (physicsExcavator?.chassis && physicsExcavator.chassis.getPosition().y > state.height + 35) {
     resetPhysicsVehicle();
   }
 }
 
-function drawPhysicsBox(body, halfWidth, halfHeight, fillStyle, strokeStyle, cellW, cellH) {
-  const position = body.getPosition();
-  const angle = body.getAngle();
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const corners = [
-    [-halfWidth, -halfHeight],
-    [halfWidth, -halfHeight],
-    [halfWidth, halfHeight],
-    [-halfWidth, halfHeight],
-  ];
-
-  ctx.beginPath();
-  for (let i = 0; i < corners.length; i++) {
-    const [localX, localY] = corners[i];
-    const worldX = position.x + localX * cos - localY * sin;
-    const worldY = position.y + localX * sin + localY * cos;
-    const canvasX = worldX * cellW;
-    const canvasY = worldY * cellH;
-    if (i === 0) ctx.moveTo(canvasX, canvasY);
-    else ctx.lineTo(canvasX, canvasY);
-  }
-  ctx.closePath();
-  ctx.fillStyle = fillStyle;
-  ctx.strokeStyle = strokeStyle;
-  ctx.lineWidth = 2;
-  ctx.fill();
-  ctx.stroke();
-}
-
-function drawPhysicsWheel(body, radius, cellW, cellH) {
-  const position = body.getPosition();
-  const angle = body.getAngle();
-  const canvasX = position.x * cellW;
-  const canvasY = position.y * cellH;
-  const canvasRadius = radius * Math.min(cellW, cellH);
-
-  ctx.beginPath();
-  ctx.arc(canvasX, canvasY, canvasRadius, 0, Math.PI * 2);
-  ctx.fillStyle = "#181c21";
-  ctx.strokeStyle = "#f3d173";
-  ctx.lineWidth = 2;
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(canvasX, canvasY);
-  ctx.lineTo(canvasX + Math.cos(angle) * canvasRadius, canvasY + Math.sin(angle) * canvasRadius);
-  ctx.strokeStyle = "#f8f1dc";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-}
-
 function drawPhysicsVehicle(cellW, cellH) {
-  if (!physicsChassisBody || !physicsLeftWheelBody || !physicsRightWheelBody) return;
+  if (!physicsExcavator) return;
 
   ctx.save();
-  drawPhysicsBox(physicsChassisBody, VEHICLE_CHASSIS_HALF_WIDTH, VEHICLE_CHASSIS_HALF_HEIGHT, "#d9563f", "#ffe0a3", cellW, cellH);
-  drawPhysicsWheel(physicsLeftWheelBody, VEHICLE_WHEEL_RADIUS, cellW, cellH);
-  drawPhysicsWheel(physicsRightWheelBody, VEHICLE_WHEEL_RADIUS, cellW, cellH);
+  drawTreadBelt(cellW, cellH);
+  drawExcavatorWheels(cellW, cellH);
+  drawExcavatorTail(cellW, cellH);
+  drawExcavatorStick(cellW, cellH);
+  drawExcavatorBoom(cellW, cellH);
+  drawExcavatorChassis(cellW, cellH);
+  drawExcavatorHeadTop(cellW, cellH);
+  drawExcavatorJawBottom(cellW, cellH);
+  drawArmTarget(cellW, cellH);
   ctx.restore();
+}
+
+function getArmLocalPoints(arm) {
+  if (!arm.bodies) return getArmLocalPointsForPose(arm, arm.targetPose);
+  const points = getArmWorldPoints(arm);
+  return {
+    base: physicsExcavator.chassis.getLocalPoint(points.base),
+    elbow: physicsExcavator.chassis.getLocalPoint(points.elbow),
+    wrist: physicsExcavator.chassis.getLocalPoint(points.wrist),
+    tip: physicsExcavator.chassis.getLocalPoint(points.tip),
+    headAbs: normalizeAngle(arm.bodies.headTop.getAngle() - physicsExcavator.chassis.getAngle()),
+    jawAbs: normalizeAngle(arm.bodies.jawBottom.getAngle() - physicsExcavator.chassis.getAngle()),
+    jawAngle: arm.joints.jawAngle.getJointAngle(),
+    stickAbs: normalizeAngle(arm.bodies.stick.getAngle() - physicsExcavator.chassis.getAngle()),
+  };
+}
+
+function getArmWorldPoints(arm) {
+  return {
+    base: arm.chassis.getWorldPoint(arm.baseLocal),
+    elbow: arm.bodies.boom.getWorldPoint(Vec2(arm.boomLength * 0.5 * arm.facing, 0)),
+    wrist: arm.bodies.stick.getWorldPoint(Vec2(arm.stickLength * 0.5 * arm.facing, 0)),
+    tip: arm.bodies.headTop.getWorldPoint(arm.headTipOffset),
+  };
+}
+
+function getArmLocalPointsForPose(arm, pose) {
+  const boomAbs = pose.boomAngle;
+  const stickAbs = pose.boomAngle + pose.stickAngle;
+  const headAbs = stickAbs + pose.headAngle;
+  const base = Vec2(arm.baseLocal.x, arm.baseLocal.y);
+  const elbow = Vec2(
+    base.x + Math.cos(boomAbs) * arm.boomLength * arm.facing,
+    base.y + Math.sin(boomAbs) * arm.boomLength * arm.facing,
+  );
+  const wrist = Vec2(
+    elbow.x + Math.cos(stickAbs) * arm.stickLength * arm.facing,
+    elbow.y + Math.sin(stickAbs) * arm.stickLength * arm.facing,
+  );
+  const tipOffset = rotateVec(arm.headTipOffset, headAbs);
+  const tip = Vec2(wrist.x + tipOffset.x, wrist.y + tipOffset.y);
+  return { base, elbow, wrist, tip, headAbs, jawAbs: headAbs + pose.jawAngle, stickAbs };
+}
+
+function getArmJointAngles(arm) {
+  if (!arm.joints) return arm.targetPose;
+  return {
+    boomAngle: arm.joints.boomAngle.getJointAngle(),
+    stickAngle: arm.joints.stickAngle.getJointAngle(),
+    headAngle: arm.joints.headAngle.getJointAngle(),
+    jawAngle: arm.joints.jawAngle.getJointAngle(),
+  };
+}
+
+function drawTreadBelt(cellW, cellH) {
+  const points = physicsExcavator.wheels.map((wheel) => worldToCanvasPoint(wheel.body.getPosition(), cellW, cellH));
+  if (points.length < 3) return;
+
+  const unit = Math.min(cellW, cellH);
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "#171d20";
+  ctx.lineWidth = physicsExcavator.radius * unit * 1.72;
+  traceClosed(points);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#3a4241";
+  ctx.lineWidth = physicsExcavator.radius * unit * 0.78;
+  traceClosed(points);
+  ctx.stroke();
+
+  const phase = ((physicsExcavator.drivePhase * unit) % 24 + 24) % 24;
+  ctx.strokeStyle = "rgba(223, 218, 187, 0.75)";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([10, 14]);
+  ctx.lineDashOffset = -phase;
+  traceClosed(points);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawExcavatorWheels(cellW, cellH) {
+  const unit = Math.min(cellW, cellH);
+  ctx.save();
+  for (const wheel of physicsExcavator.wheels) {
+    const center = worldToCanvasPoint(wheel.body.getPosition(), cellW, cellH);
+    const radius = wheel.radius * unit;
+    ctx.fillStyle = "#323937";
+    ctx.strokeStyle = "#111719";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = "#d8c886";
+    ctx.lineWidth = 2;
+    const angle = wheel.body.getAngle();
+    line(center.x, center.y, center.x + Math.cos(angle) * radius * 0.72, center.y + Math.sin(angle) * radius * 0.72);
+  }
+  ctx.restore();
+}
+
+function drawExcavatorChassis(cellW, cellH) {
+  drawSvgAtAnchor(
+    excavatorImages.chassis,
+    physicsExcavator.chassis.getWorldPoint(physicsExcavator.chassisArtPivotLocal),
+    physicsExcavator.chassis.getAngle(),
+    excavatorSvg.chassis.pivot,
+    EXCAVATOR_ART_SCALE,
+    physicsExcavator.facing,
+    cellW,
+    cellH,
+  );
+}
+
+function drawExcavatorTail(cellW, cellH) {
+  const tail = physicsExcavator.tail;
+  const localAngle = tail.baseAngle + tail.offset;
+  drawSvgAtAnchor(
+    excavatorImages.tail,
+    physicsExcavator.chassis.getWorldPoint(tail.localPivot),
+    physicsExcavator.chassis.getAngle() + localAngle * physicsExcavator.facing,
+    excavatorSvg.tail.pivot,
+    EXCAVATOR_ART_SCALE,
+    physicsExcavator.facing,
+    cellW,
+    cellH,
+  );
+}
+
+function drawExcavatorBoom(cellW, cellH) {
+  const arm = physicsExcavator.arm;
+  const points = getArmLocalPoints(arm);
+  ctx.save();
+  drawHydraulics(points, cellW, cellH);
+  drawSvgBodyBetweenPivots(arm.bodies.boom, excavatorImages.boom, excavatorSvg.boom, arm.facing, cellW, cellH);
+  ctx.restore();
+}
+
+function drawExcavatorStick(cellW, cellH) {
+  const arm = physicsExcavator.arm;
+  drawSvgBodyBetweenPivots(arm.bodies.stick, excavatorImages.stick, excavatorSvg.stick, arm.facing, cellW, cellH);
+}
+
+function drawExcavatorHeadTop(cellW, cellH) {
+  const arm = physicsExcavator.arm;
+  drawSvgBodyAtPivot(arm.bodies.headTop, excavatorImages.headTop, excavatorSvg.headTop, EXCAVATOR_HEAD_JAW_ART_SCALE, arm.facing, cellW, cellH);
+}
+
+function drawExcavatorJawBottom(cellW, cellH) {
+  const arm = physicsExcavator.arm;
+  drawSvgBodyAtPivot(arm.bodies.jawBottom, excavatorImages.jawBottom, excavatorSvg.jawBottom, EXCAVATOR_HEAD_JAW_ART_SCALE, arm.facing, cellW, cellH);
+}
+
+function drawHydraulics(points, cellW, cellH) {
+  const unit = Math.min(cellW, cellH);
+  ctx.save();
+  ctx.strokeStyle = "#343733";
+  ctx.lineWidth = Math.max(2, unit * 0.8);
+  drawLocalLine(offsetLocal(points.base, -0.2, -0.08), offsetLocal(points.elbow, -0.45, -0.15), cellW, cellH);
+  drawLocalLine(offsetLocal(points.elbow, 0.2, -0.2), offsetLocal(points.wrist, -0.28, -0.12), cellW, cellH);
+  ctx.strokeStyle = "#c7b16e";
+  ctx.lineWidth = Math.max(1, unit * 0.32);
+  drawLocalLine(offsetLocal(points.base, -0.2, -0.08), offsetLocal(points.elbow, -0.45, -0.15), cellW, cellH);
+  drawLocalLine(offsetLocal(points.elbow, 0.2, -0.2), offsetLocal(points.wrist, -0.28, -0.12), cellW, cellH);
+  ctx.restore();
+}
+
+function drawSvgBodyBetweenPivots(body, imageAsset, svg, facing, cellW, cellH) {
+  const anchor = segmentCenter(svg.pivot, svg.end);
+  const assetAngle = svgPivotAngle(svg.pivot, svg.end);
+  const angle = facing === EXCAVATOR_FACING_RIGHT ? body.getAngle() - assetAngle : body.getAngle() + assetAngle;
+  drawSvgAtAnchor(imageAsset, body.getPosition(), angle, anchor, EXCAVATOR_ART_SCALE, facing, cellW, cellH);
+}
+
+function drawSvgBodyAtPivot(body, imageAsset, svg, scale, facing, cellW, cellH) {
+  drawSvgAtAnchor(imageAsset, body.getPosition(), body.getAngle(), svg.pivot, scale, facing, cellW, cellH);
+}
+
+function drawSvgAtAnchor(imageAsset, anchorWorld, angle, anchorSvg, scale, scaleXSign, cellW, cellH) {
+  if (!imageAsset.loaded) return;
+
+  const unit = Math.min(cellW, cellH);
+  const anchor = worldToCanvasPoint(anchorWorld, cellW, cellH);
+  ctx.save();
+  ctx.translate(anchor.x, anchor.y);
+  ctx.rotate(angle);
+  ctx.scale(unit * scale * scaleXSign, unit * scale);
+  ctx.drawImage(imageAsset.image, -anchorSvg.x, -anchorSvg.y);
+  ctx.restore();
+}
+
+function drawArmTarget(cellW, cellH) {
+  const arm = physicsExcavator.arm;
+  if (!arm.directTargetLocal) return;
+  arm.targetWorld = arm.chassis.getWorldPoint(arm.directTargetLocal);
+  const point = worldToCanvasPoint(arm.targetWorld, cellW, cellH);
+  const radius = 0.2 * Math.min(cellW, cellH) * EXCAVATOR_SCALE;
+  ctx.save();
+  ctx.strokeStyle = arm.directLimit ? "#bb2f2f" : "#d3952c";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  line(point.x - radius * 0.6, point.y, point.x + radius * 0.6, point.y);
+  line(point.x, point.y - radius * 0.6, point.x, point.y + radius * 0.6);
+  ctx.restore();
+}
+
+function localToCanvas(local, cellW, cellH) {
+  return worldToCanvasPoint(physicsExcavator.chassis.getWorldPoint(local), cellW, cellH);
+}
+
+function offsetLocal(point, x, y) {
+  return Vec2(point.x + x * EXCAVATOR_SCALE * physicsExcavator.facing, point.y - y * EXCAVATOR_SCALE);
+}
+
+function drawLocalLine(a, b, cellW, cellH) {
+  const start = localToCanvas(a, cellW, cellH);
+  const end = localToCanvas(b, cellW, cellH);
+  line(start.x, start.y, end.x, end.y);
+}
+
+function worldToCanvasPoint(point, cellW, cellH) {
+  return {
+    x: point.x * cellW,
+    y: point.y * cellH,
+  };
+}
+
+function traceClosed(points) {
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.closePath();
+}
+
+function line(x1, y1, x2, y2) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+function getExcavatorBodies() {
+  if (!physicsExcavator) return [];
+  return [
+    physicsExcavator.chassis,
+    ...physicsExcavator.wheels.map((wheel) => wheel.body),
+    ...Object.values(physicsExcavator.arm.bodies),
+  ];
+}
+
+function destroyExcavator(excavator) {
+  if (!excavator) return;
+
+  [
+    ...Object.values(excavator.arm.joints),
+    ...excavator.wheelJoints,
+    ...excavator.linkJoints,
+  ].forEach((joint) => {
+    if (joint) physicsWorld.destroyJoint(joint);
+  });
+
+  [
+    ...Object.values(excavator.arm.bodies),
+    ...excavator.wheels.map((wheel) => wheel.body),
+    excavator.chassis,
+  ].forEach(destroyPhysicsBody);
+}
+
+function flipExcavatorFacing() {
+  if (!physicsExcavator) return;
+
+  const previous = physicsExcavator;
+  const currentPosition = previous.chassis.getPosition();
+  const nextState = {
+    angle: previous.chassis.getAngle(),
+    drivePhase: previous.drivePhase,
+    arm: captureFlippedArmState(previous.arm),
+    tail: {
+      offset: previous.tail.offset,
+      velocity: 0,
+    },
+  };
+
+  destroyExcavator(previous);
+  physicsExcavator = createExcavator(Vec2(currentPosition.x, currentPosition.y), -previous.facing, nextState);
+  sharedWheelSpeed = 0;
+  desiredDrive = 0;
+  pointerArmControl.deltaLocal = Vec2(0, 0);
+}
+
+function captureFlippedArmState(arm) {
+  const points = getArmLocalPoints(arm);
+  const directTargetLocal = arm.directTargetLocal ?? points.wrist;
+  const desiredHeadAbs = arm.desiredHeadAbs ?? points.headAbs;
+
+  return {
+    targetPose: flipArmPose(getArmJointAngles(arm)),
+    directTargetLocal: Vec2(-directTargetLocal.x, directTargetLocal.y),
+    desiredHeadAbs: -desiredHeadAbs,
+  };
+}
+
+function flipArmPose(pose) {
+  return {
+    boomAngle: -pose.boomAngle,
+    stickAngle: -pose.stickAngle,
+    headAngle: -pose.headAngle,
+    jawAngle: -pose.jawAngle,
+  };
+}
+
+function createExcavatorImages() {
+  return Object.fromEntries(Object.entries(excavatorSvgSources).map(([key, svg]) => {
+    const image = new Image();
+    const asset = {
+      image,
+      loaded: false,
+    };
+    image.onload = () => {
+      asset.loaded = true;
+    };
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(hideSvgPivotMarkers(svg))}`;
+    return [key, asset];
+  }));
+}
+
+function hideSvgPivotMarkers(svg) {
+  return svg.replace(/<circle\b[^>]*inkscape:label="[^"]*pivot-point"[^>]*\/?>/g, (tag) => {
+    if (tag.includes("style=")) return tag.replace(/style="[^"]*"/, "style=\"display:none\"");
+    return tag.replace(/\/?>$/, " style=\"display:none\" />");
+  });
 }
 
 function isEditableTarget(target) {
@@ -1879,40 +3065,41 @@ function isEditableTarget(target) {
 
 function colorLoose(x, y) {
   const shade = (x * 13 + y * 7 + state.tick) % 19;
-  return `rgb(${178 + shade}, ${129 + Math.floor(shade * 0.45)}, ${70 + Math.floor(shade * 0.25)})`;
+  return LOOSE_COLORS[shade];
 }
 
 function colorPacked(x, y) {
   const shade = (x * 11 + y * 5) % 16;
-  return `rgb(${118 + shade}, ${83 + Math.floor(shade * 0.35)}, 58)`;
+  return PACKED_COLORS[shade];
 }
 
 function colorDamage(x, y, damage) {
   const shade = (x * 11 + y * 5) % 16;
+  const color = PACKED_COLOR_CHANNELS[shade];
   const fracture = Math.min(1, Math.max(0, damage));
-  const r = Math.floor(118 + shade + fracture * 52);
-  const g = Math.floor(83 + Math.floor(shade * 0.35) - fracture * 16);
-  const b = Math.floor(58 - fracture * 30);
+  const r = Math.floor(color.r + fracture * 52);
+  const g = Math.floor(color.g - fracture * 16);
+  const b = Math.floor(color.b - fracture * 30);
   return `rgb(${r}, ${g}, ${b})`;
 }
 
 function colorStress(x, y, stress, threshold) {
   const shade = (x * 11 + y * 5) % 16;
+  const color = PACKED_COLOR_CHANNELS[shade];
   const pressure = Math.min(1, Math.max(0, stress / Math.max(threshold, 1)));
   const darken = Math.floor(pressure * 34);
-  const r = Math.max(78, 118 + shade - darken);
-  const g = Math.max(56, 83 + Math.floor(shade * 0.35) - Math.floor(darken * 0.72));
-  const b = Math.max(39, 58 - Math.floor(darken * 0.48));
+  const r = Math.max(78, color.r - darken);
+  const g = Math.max(56, color.g - Math.floor(darken * 0.72));
+  const b = Math.max(39, color.b - Math.floor(darken * 0.48));
   return `rgb(${r}, ${g}, ${b})`;
 }
 
 let pointerCell = null;
 
-function brushCells(cx, cy) {
+function forEachBrushCell(cx, cy, visit) {
   const size = Math.max(1, Math.round(controls.brushSize.value));
   const left = cx - Math.floor(size / 2);
   const top = cy - Math.floor(size / 2);
-  const cells = [];
   const center = size / 2;
   const radiusSq = center * center;
 
@@ -1926,40 +3113,38 @@ function brushCells(cx, cy) {
 
       const x = left + localX;
       const y = top + localY;
-      if (inBounds(x, y)) cells.push({ x, y });
+      if (inBounds(x, y)) visit(x, y);
     }
   }
-
-  return cells;
 }
 
 function drawBrushPreview(cellW, cellH) {
   if (!pointerCell) return;
-  const cells = brushCells(pointerCell.x, pointerCell.y);
-  if (cells.length === 0) return;
 
   ctx.save();
   ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
   ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
   ctx.lineWidth = Math.max(1, Math.min(cellW, cellH) * 0.35);
 
-  for (const cell of cells) {
-    const x = Math.floor(cell.x * cellW);
-    const y = Math.floor(cell.y * cellH);
+  forEachBrushCell(pointerCell.x, pointerCell.y, (cellX, cellY) => {
+    const x = Math.floor(cellX * cellW);
+    const y = Math.floor(cellY * cellH);
     const width = Math.ceil(cellW);
     const height = Math.ceil(cellH);
     ctx.fillRect(x, y, width, height);
     ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, width - 1), Math.max(1, height - 1));
-  }
+  });
 
   ctx.restore();
 }
 
 function updateStats() {
+  const threshold = controls.cohesion.value;
+  if (!statsCache.dirty && statsCache.tick === state.tick && statsCache.threshold === threshold) return;
+
   let loose = 0;
   let packed = 0;
   let hot = 0;
-  const threshold = controls.cohesion.value;
   for (let i = 0; i < state.cells.length; i++) {
     if (state.cells[i] === LOOSE) loose++;
     if (state.cells[i] === PACKED) {
@@ -1967,14 +3152,55 @@ function updateStats() {
       if (state.stress[i] > threshold) hot++;
     }
   }
-  document.querySelector("#stats").textContent =
-    `${packed} packed / ${loose} loose / ${hot} failing / tick ${state.tick}`;
+  statsElement.textContent = `${packed} packed / ${loose} loose / ${hot} failing / tick ${state.tick}`;
+  statsCache.dirty = false;
+  statsCache.tick = state.tick;
+  statsCache.threshold = threshold;
 }
 
 function paintAtEvent(event) {
   pointerCell = cellFromEvent(event);
   if (!pointerCell) return;
   paintBrush(pointerCell.x, pointerCell.y);
+}
+
+function beginPointerArmControl(event) {
+  pointerArmControl.active = true;
+  pointerArmControl.lastX = event.clientX;
+  pointerArmControl.lastY = event.clientY;
+  pointerArmControl.lastInputAt = performance.now();
+  canvas.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function movePointerArmControl(event) {
+  if (!physicsExcavator) return;
+
+  const dx = event.clientX - pointerArmControl.lastX;
+  const dy = event.clientY - pointerArmControl.lastY;
+  pointerArmControl.lastX = event.clientX;
+  pointerArmControl.lastY = event.clientY;
+
+  const precision = getPrecisionScale();
+  const worldDelta = Vec2(
+    (dx / Math.max(1, canvasLayout.cellW)) * precision,
+    (dy / Math.max(1, canvasLayout.cellH)) * precision,
+  );
+  const localDelta = rotateVec(worldDelta, -physicsExcavator.chassis.getAngle());
+  pointerArmControl.deltaLocal = Vec2(
+    pointerArmControl.deltaLocal.x + localDelta.x,
+    pointerArmControl.deltaLocal.y + localDelta.y,
+  );
+  pointerArmControl.lastInputAt = performance.now();
+  event.preventDefault();
+}
+
+function endPointerArmControl(event) {
+  if (!pointerArmControl.active) return;
+  pointerArmControl.active = false;
+  pointerArmControl.lastInputAt = performance.now();
+  if (event?.pointerId != null) canvas.releasePointerCapture?.(event.pointerId);
+  event?.preventDefault();
 }
 
 function cellFromEvent(event) {
@@ -1985,12 +3211,12 @@ function cellFromEvent(event) {
 }
 
 function paintBrush(cx, cy) {
-  for (const cell of brushCells(cx, cy)) {
-    const i = index(cell.x, cell.y);
+  forEachBrushCell(cx, cy, (x, y) => {
+    const i = index(x, y);
     if (state.tool === "erase") clearCell(i);
     if (state.tool === "loose") setCell(i, LOOSE);
     if (state.tool === "packed") setCell(i, PACKED);
-  }
+  });
 }
 
 function runDirtTicks(tickCount) {
@@ -2026,23 +3252,23 @@ function frame(now = performance.now()) {
   requestAnimationFrame(frame);
 }
 
-document.querySelector("#playPause").addEventListener("click", (event) => {
+playPauseButton.addEventListener("click", (event) => {
   state.running = !state.running;
   event.currentTarget.textContent = state.running ? "Pause" : "Play";
 });
 
-document.querySelector("#step").addEventListener("click", () => {
+stepButton.addEventListener("click", () => {
   runDirtTicks(1);
   dirtAccumulator = 0;
   render();
 });
 
-document.querySelector("#seed").addEventListener("click", () => {
+seedButton.addEventListener("click", () => {
   seedWorld();
   resetPhysicsVehicle();
 });
 
-document.querySelector("#clear").addEventListener("click", () => {
+clearButton.addEventListener("click", () => {
   state.cells.fill(EMPTY);
   state.ages.fill(0);
   state.damage.fill(0);
@@ -2050,7 +3276,6 @@ document.querySelector("#clear").addEventListener("click", () => {
   state.visualStress.fill(0);
   settleDirtVisualPositions();
   state.rigid.fill(0);
-  state.rigidBody.fill(0);
   state.rigidVx.fill(0);
   state.rigidVy.fill(0);
   state.rigidMass.fill(0);
@@ -2062,10 +3287,11 @@ document.querySelector("#clear").addEventListener("click", () => {
   dirtAccumulator = 0;
   packedContours = [];
   markPackedTerrainDirty();
+  markStatsDirty();
   resetPhysicsVehicle();
 });
 
-document.querySelector("#resize").addEventListener("click", () => {
+resizeButton.addEventListener("click", () => {
   resizeGrid(controls.gridWidth.value, controls.gridHeight.value);
   resetPhysicsVehicle();
 });
@@ -2074,45 +3300,87 @@ controls.resetVehicle.addEventListener("click", () => {
   resetPhysicsVehicle();
 });
 
-document.querySelectorAll(".mode").forEach((button) => {
+modeButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".mode").forEach((item) => item.classList.remove("is-active"));
+    modeButtons.forEach((item) => item.classList.remove("is-active"));
     button.classList.add("is-active");
     state.tool = button.dataset.tool;
   });
 });
 
-document.querySelectorAll(".shape").forEach((button) => {
+shapeButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".shape").forEach((item) => item.classList.remove("is-active"));
+    shapeButtons.forEach((item) => item.classList.remove("is-active"));
     button.classList.add("is-active");
     state.brushShape = button.dataset.brushShape;
   });
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (event.button === 2) {
+    beginPointerArmControl(event);
+    return;
+  }
+  if (event.button !== 0) return;
   state.painting = true;
   canvas.setPointerCapture(event.pointerId);
   paintAtEvent(event);
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (pointerArmControl.active) {
+    movePointerArmControl(event);
+    return;
+  }
   pointerCell = cellFromEvent(event);
   if (state.painting) paintAtEvent(event);
 });
 
 canvas.addEventListener("pointerup", (event) => {
+  if (pointerArmControl.active) {
+    endPointerArmControl(event);
+    return;
+  }
   state.painting = false;
   canvas.releasePointerCapture(event.pointerId);
+});
+
+canvas.addEventListener("pointercancel", (event) => {
+  endPointerArmControl(event);
+  state.painting = false;
 });
 
 canvas.addEventListener("pointerleave", () => {
   pointerCell = null;
 });
 
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
 window.addEventListener("keydown", (event) => {
   if (isEditableTarget(event.target)) return;
-  if (event.repeat) return;
+
+  const continuousCodes = new Set([
+    "KeyA",
+    "KeyD",
+    "ArrowLeft",
+    "ArrowRight",
+    "KeyI",
+    "KeyJ",
+    "KeyK",
+    "KeyL",
+    "KeyQ",
+    "KeyE",
+    "KeyW",
+    "KeyS",
+    "ShiftLeft",
+    "ShiftRight",
+  ]);
+  if (continuousCodes.has(event.code)) {
+    activeKeys.add(event.code);
+    event.preventDefault();
+  }
 
   if (event.code === "KeyA" || event.code === "ArrowLeft") {
     isDrivingLeft = true;
@@ -2120,11 +3388,21 @@ window.addEventListener("keydown", (event) => {
   } else if (event.code === "KeyD" || event.code === "ArrowRight") {
     isDrivingRight = true;
     event.preventDefault();
-  } else if (event.code === "KeyW" || event.code === "ArrowUp") {
+  }
+
+  if (event.repeat) return;
+
+  if (event.code === "ArrowUp" || event.code === "KeyU") {
     flipVehicleUpright();
+    event.preventDefault();
+  } else if (event.code === "KeyF") {
+    flipExcavatorFacing();
     event.preventDefault();
   } else if (event.code === "KeyR") {
     resetPhysicsVehicle();
+    event.preventDefault();
+  } else if (event.code === "Space") {
+    joypad.jawOpen = !joypad.jawOpen;
     event.preventDefault();
   }
 });
@@ -2132,6 +3410,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => {
   if (isEditableTarget(event.target)) return;
 
+  activeKeys.delete(event.code);
   if (event.code === "KeyA" || event.code === "ArrowLeft") {
     isDrivingLeft = false;
     event.preventDefault();
@@ -2140,6 +3419,29 @@ window.addEventListener("keyup", (event) => {
     event.preventDefault();
   }
 });
+
+window.addEventListener("gamepadconnected", (event) => {
+  joypad.index = event.gamepad.index;
+  joypad.connected = true;
+});
+
+window.addEventListener("gamepaddisconnected", (event) => {
+  if (joypad.index !== event.gamepad.index) return;
+  joypad.index = null;
+  joypad.connected = false;
+  joypad.drive = 0;
+  joypad.armX = 0;
+  joypad.armY = 0;
+  joypad.headTurn = 0;
+  joypad.active = false;
+});
+
+if ("ResizeObserver" in window) {
+  canvasResizeObserver = new ResizeObserver(markCanvasLayoutDirty);
+  canvasResizeObserver.observe(canvasWrap);
+} else {
+  window.addEventListener("resize", markCanvasLayoutDirty);
+}
 
 resizeGrid(state.width, state.height);
 rebuildPhysicsTerrain();
