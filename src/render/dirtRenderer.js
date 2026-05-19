@@ -13,7 +13,7 @@ import {
 } from "./paperDirtStyle.js";
 
 const STRESS_VISUAL_EASE = 0.055;
-const STRESS_EDGE_FADE_CELLS = 6;
+const STRESS_EDGE_FADE_CELLS = 4;
 
 export function createDirtRenderer({ state, grid, controls, ctx, statsElement, statsCache }) {
   const { index, inBounds } = grid;
