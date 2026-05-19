@@ -52,8 +52,8 @@
           </div>
           <label class="range-row">
             <span>Brush size</span>
-            <strong id="brushSizeValue">6</strong>
-            <input id="brushSize" type="range" min="1" max="28" step="1" value="6" />
+            <strong id="brushSizeValue">12</strong>
+            <input id="brushSize" type="range" min="1" max="56" step="1" value="12" />
           </label>
         </section>
 
@@ -108,19 +108,29 @@
             <input id="speed" type="range" min="1" max="12" step="1" value="1" />
           </label>
           <label class="range-row">
+            <span>Active width</span>
+            <strong id="activeRegionWidthValue">200</strong>
+            <input id="activeRegionWidth" type="range" min="24" max="768" step="8" value="200" />
+          </label>
+          <label class="range-row">
+            <span>Active height</span>
+            <strong id="activeRegionHeightValue">200</strong>
+            <input id="activeRegionHeight" type="range" min="24" max="512" step="8" value="200" />
+          </label>
+          <label class="range-row">
             <span>Grid width</span>
-            <strong id="gridWidthValue">160</strong>
-            <input id="gridWidth" type="range" min="80" max="240" step="8" value="160" />
+            <strong id="gridWidthValue">480</strong>
+            <input id="gridWidth" type="range" min="160" max="768" step="16" value="480" />
           </label>
           <label class="range-row">
             <span>Grid height</span>
-            <strong id="gridHeightValue">104</strong>
-            <input id="gridHeight" type="range" min="56" max="160" step="8" value="104" />
+            <strong id="gridHeightValue">320</strong>
+            <input id="gridHeight" type="range" min="112" max="512" step="16" value="320" />
           </label>
           <button id="resize" class="wide" type="button">Apply Grid</button>
           <label class="toggle-row">
             <span>Stress view</span>
-            <input id="stressView" type="checkbox" checked />
+            <input id="stressView" type="checkbox" />
           </label>
           <label class="toggle-row">
             <span>Damage view</span>
@@ -128,7 +138,7 @@
           </label>
           <label class="toggle-row">
             <span>Packed contours</span>
-            <input id="contourView" type="checkbox" />
+            <input id="contourView" type="checkbox" checked />
           </label>
           <label class="toggle-row">
             <span>Debug view</span>

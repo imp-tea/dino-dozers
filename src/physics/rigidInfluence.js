@@ -1,7 +1,7 @@
 import { Vec2 } from "planck";
 import { PACKED } from "../sim/cellTypes.js";
 
-export function createRigidInfluence({ state, grid, applyTerrainEffects = () => {} }) {
+export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, applyTerrainEffects = () => {} }) {
   const {
     index,
     inBounds,
@@ -136,7 +136,7 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
     if (angularSpeed <= 0 || depth <= 0) return null;
     return {
       angularSpeed,
-      depth: Math.max(1, Math.trunc(depth)),
+      depth: Math.max(1, Math.trunc(depth * cellsPerWorldUnit)),
     };
   }
 
@@ -152,8 +152,8 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
   }
 
   function flattenPackedTerrainUnderCircle(body, shape, depth) {
-    const center = shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition();
-    const radius = shape.m_radius;
+    const center = worldToCellPoint(shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition());
+    const radius = shape.m_radius * cellsPerWorldUnit;
     const minX = Math.max(0, Math.floor(center.x - radius));
     const maxX = Math.min(state.width - 1, Math.ceil(center.x + radius));
     const minY = Math.max(0, Math.floor(center.y));
@@ -229,7 +229,7 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
 
   function collectPackedContactCellsForPolygon(cells, body, localVertices) {
     if (!localVertices?.length) return;
-    const vertices = localVertices.map((vertex) => body.getWorldPoint(vertex));
+    const vertices = localVertices.map((vertex) => worldToCellPoint(body.getWorldPoint(vertex)));
     const bounds = polygonBounds(vertices, 1);
 
     for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -241,8 +241,8 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
   }
 
   function collectPackedContactCellsForCircle(cells, body, shape) {
-    const center = shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition();
-    const radius = shape.m_radius;
+    const center = worldToCellPoint(shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition());
+    const radius = shape.m_radius * cellsPerWorldUnit;
     const minX = Math.max(0, Math.floor(center.x - radius - 1));
     const maxX = Math.min(state.width - 1, Math.ceil(center.x + radius + 1));
     const minY = Math.max(0, Math.floor(center.y - radius - 1));
@@ -269,7 +269,7 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
   function rasterizeRigidPolygon(body, localVertices, massShare, terrainMassShare, impactMassShare) {
     if (!localVertices?.length) return;
 
-    const vertices = localVertices.map((vertex) => body.getWorldPoint(vertex));
+    const vertices = localVertices.map((vertex) => worldToCellPoint(body.getWorldPoint(vertex)));
     const bounds = polygonBounds(vertices, 1);
     const area = Math.max(1, polygonArea(vertices));
     const cellMass = massShare / area;
@@ -285,8 +285,8 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
   }
 
   function rasterizeRigidCircleShape(body, shape, massShare, terrainMassShare, impactMassShare) {
-    const center = shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition();
-    const radius = shape.m_radius;
+    const center = worldToCellPoint(shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition());
+    const radius = shape.m_radius * cellsPerWorldUnit;
 
     const minX = Math.max(0, Math.floor(center.x - radius - 1));
     const maxX = Math.min(state.width - 1, Math.ceil(center.x + radius + 1));
@@ -354,16 +354,27 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
 
   function markRigidCell(x, y, body, cellMass, terrainCellMass, impactCellMass) {
     const i = index(x, y);
-    const velocity = body.getLinearVelocityFromWorldPoint(Vec2(x + 0.5, y + 0.5));
+    const velocity = body.getLinearVelocityFromWorldPoint(cellToWorldPoint(x + 0.5, y + 0.5));
     const previousVelocityMass = rigidVelocityMass[i];
     const nextVelocityMass = previousVelocityMass + cellMass;
 
     state.rigid[i] = 1;
-    state.rigidVx[i] = (state.rigidVx[i] * previousVelocityMass + velocity.x * cellMass) / nextVelocityMass;
-    state.rigidVy[i] = (state.rigidVy[i] * previousVelocityMass + velocity.y * cellMass) / nextVelocityMass;
+    state.rigidVx[i] = (state.rigidVx[i] * previousVelocityMass + velocity.x * cellsPerWorldUnit * cellMass) / nextVelocityMass;
+    state.rigidVy[i] = (state.rigidVy[i] * previousVelocityMass + velocity.y * cellsPerWorldUnit * cellMass) / nextVelocityMass;
     state.rigidMass[i] += terrainCellMass;
     state.rigidImpactMass[i] += impactCellMass;
     rigidVelocityMass[i] = nextVelocityMass;
+  }
+
+  function worldToCellPoint(point) {
+    return {
+      x: point.x * cellsPerWorldUnit,
+      y: point.y * cellsPerWorldUnit,
+    };
+  }
+
+  function cellToWorldPoint(x, y) {
+    return Vec2(x / cellsPerWorldUnit, y / cellsPerWorldUnit);
   }
 
   return {

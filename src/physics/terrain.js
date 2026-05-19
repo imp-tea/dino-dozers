@@ -1,8 +1,9 @@
 import { Chain, Vec2 } from "planck";
 
-export function createPhysicsTerrain({ world, contours }) {
+export function createPhysicsTerrain({ world, contours, cellsPerWorldUnit = 1 }) {
   let dirty = true;
   let terrainBody = null;
+  const cellToWorldScale = 1 / cellsPerWorldUnit;
 
   function markDirty() {
     dirty = true;
@@ -17,7 +18,7 @@ export function createPhysicsTerrain({ world, contours }) {
     for (const contour of contours.getContours()) {
       if (contour.length < 3) continue;
 
-      const vertices = contour.map((point) => Vec2(point.x, point.y));
+      const vertices = contour.map((point) => Vec2(point.x * cellToWorldScale, point.y * cellToWorldScale));
       terrainBody.createFixture({
         shape: Chain(vertices, true),
         friction: 1.4,

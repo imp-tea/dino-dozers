@@ -2,6 +2,7 @@ import { Vec2, World } from "planck";
 import { createRigidInfluence } from "./physics/rigidInfluence.js";
 import { createPhysicsTerrain } from "./physics/terrain.js";
 import { createInputState } from "./input/inputState.js";
+import { createCamera } from "./render/camera.js";
 import { createCanvasLayout } from "./render/canvasLayout.js";
 import { createDirtRenderer } from "./render/dirtRenderer.js";
 import { drawPlanckDebugView } from "./render/planckDebugRenderer.js";
@@ -20,6 +21,27 @@ import { createWreckersaurusVehicle } from "./vehicles/wreckersaurus/factory.js"
 const PHYSICS_STEP_SECONDS = 1 / 60;
 const DIRT_STEP_SECONDS = 1 / 30;
 const DIRT_MAX_FRAME_SLICES = 3;
+const CELLS_PER_WORLD_UNIT = 2;
+const STRESS_SURFACE_BAND_CELLS = 4;
+const VEHICLE_CONTROL_CODES = new Set([
+  "KeyA",
+  "KeyD",
+  "ArrowLeft",
+  "ArrowRight",
+  "KeyI",
+  "KeyJ",
+  "KeyK",
+  "KeyL",
+  "KeyQ",
+  "KeyE",
+  "KeyW",
+  "KeyS",
+]);
+const CONTINUOUS_KEY_CODES = new Set([
+  ...VEHICLE_CONTROL_CODES,
+  "ShiftLeft",
+  "ShiftRight",
+]);
 
 const canvas = document.querySelector("#sim");
 const ctx = canvas.getContext("2d");
@@ -45,6 +67,7 @@ let physicsAccumulator = 0;
 let dirtAccumulator = 0;
 let canvasResizeObserver = null;
 let lastFrame = performance.now();
+let stressVisibilityDirty = true;
 
 const { activeKeys, pointerArmControl, joypad } = createInputState();
 let activeVehicleType = VEHICLE_TYPES.ROLLERSAURUS;
@@ -66,6 +89,11 @@ const {
 } = createCanvasLayout({
   canvas,
   canvasWrap,
+  state,
+});
+const camera = createCamera({
+  canvas,
+  layout: canvasLayout,
   state,
 });
 
@@ -97,6 +125,7 @@ const dirtSimulation = createDirtSimulation({
   state,
   grid,
   getSettings: getSimulationSettings,
+  getActiveRegion: getActiveVehicleRegion,
   updateRigidInfluenceGrid,
 });
 const { simulationStep } = dirtSimulation;
@@ -104,10 +133,12 @@ const packedContourCache = createPackedContourCache({ state, grid });
 const physicsTerrain = createPhysicsTerrain({
   world: physicsWorld,
   contours: packedContourCache,
+  cellsPerWorldUnit: CELLS_PER_WORLD_UNIT,
 });
 const rigidInfluence = createRigidInfluence({
   state,
   grid,
+  cellsPerWorldUnit: CELLS_PER_WORLD_UNIT,
   applyTerrainEffects: () => dirtSimulation.applyRigidTerrainEffects(),
 });
 
@@ -136,6 +167,65 @@ function dirtTweenProgress() {
 function markPackedTerrainDirty() {
   packedContourCache.markDirty();
   physicsTerrain.markDirty();
+  stressVisibilityDirty = true;
+}
+
+function rebuildStressVisibilityIfDirty() {
+  if (!stressVisibilityDirty) return;
+  rebuildStressVisibility();
+  stressVisibilityDirty = false;
+}
+
+function rebuildStressVisibility() {
+  state.stressVisibility.fill(0);
+  const queue = [];
+  const w = state.width;
+  const h = state.height;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = index(x, y);
+      if (state.cells[i] !== PACKED || !isStressSurfaceCell(x, y)) continue;
+      state.stressVisibility[i] = 1;
+      queue.push(i);
+    }
+  }
+
+  for (let head = 0; head < queue.length; head++) {
+    const current = queue[head];
+    const nextVisibility = state.stressVisibility[current] - 1 / STRESS_SURFACE_BAND_CELLS;
+    if (nextVisibility <= 0) continue;
+
+    const x = current % w;
+    const y = Math.floor(current / w);
+    spreadStressVisibility(queue, x - 1, y, nextVisibility);
+    spreadStressVisibility(queue, x + 1, y, nextVisibility);
+    spreadStressVisibility(queue, x, y - 1, nextVisibility);
+    spreadStressVisibility(queue, x, y + 1, nextVisibility);
+  }
+}
+
+function isStressSurfaceCell(x, y) {
+  return (
+    isStressExposedNeighbor(x - 1, y) ||
+    isStressExposedNeighbor(x + 1, y) ||
+    isStressExposedNeighbor(x, y - 1) ||
+    isStressExposedNeighbor(x, y + 1)
+  );
+}
+
+function isStressExposedNeighbor(x, y) {
+  if (!inBounds(x, y)) return true;
+  const i = index(x, y);
+  return state.cells[i] === EMPTY || state.rigid[i] !== 0;
+}
+
+function spreadStressVisibility(queue, x, y, visibility) {
+  if (!inBounds(x, y)) return;
+  const i = index(x, y);
+  if (state.cells[i] !== PACKED || state.stressVisibility[i] >= visibility) return;
+  state.stressVisibility[i] = visibility;
+  queue.push(i);
 }
 
 function seedWorld() {
@@ -147,6 +237,7 @@ function seedWorld() {
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
+  state.stressVisibility.fill(0);
   settleDirtVisualPositions();
   state.rigid.fill(0);
   state.rigidVx.fill(0);
@@ -167,6 +258,7 @@ function seedWorld() {
       setCell(index(x, y), PACKED);
     }
   }
+  stressVisibilityDirty = true;
 }
 
 function updateRigidInfluenceGrid() {
@@ -191,25 +283,87 @@ function getActiveVehicleFractureLoadMultiplier() {
     : WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER;
 }
 
-function render() {
+function render(delta = 0) {
   syncCanvasLayout();
+  camera.update(delta / 1000, getActiveVehicleCameraTarget());
 
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = "#2a2d29";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const cellW = canvasLayout.cellW;
   const cellH = canvasLayout.cellH;
+  const worldCellW = cellW * CELLS_PER_WORLD_UNIT;
+  const worldCellH = cellH * CELLS_PER_WORLD_UNIT;
   const dirtTween = dirtTweenProgress();
 
-  const packedContours = packedContourCache.getContours();
+  const packedContours = packedContourCache.getRenderContours();
+  rebuildStressVisibilityIfDirty();
+  ctx.save();
+  camera.applyTransform(ctx);
   dirtRenderer.drawPackedContourFill(packedContours, cellW, cellH);
   dirtRenderer.drawCells({ cellW, cellH, dirtTween });
   dirtRenderer.drawPackedContourOverlay(packedContours, cellW, cellH);
-  drawActiveVehicle(cellW, cellH);
-  if (controls.debugView.checked) drawPlanckDebugView(ctx, physicsWorld, { cellW, cellH });
+  drawActiveVehicle(worldCellW, worldCellH);
+  if (controls.debugView.checked) drawPlanckDebugView(ctx, physicsWorld, { cellW: worldCellW, cellH: worldCellH });
   dirtRenderer.drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH);
+  ctx.restore();
   dirtRenderer.updateStats();
+}
+
+function getActiveVehicleCameraTarget() {
+  return getActiveVehicleCellPosition() ?? { x: state.width * 0.5, y: state.height * 0.5 };
+}
+
+function getActiveVehicleCellPosition() {
+  const activeVehicle = vehicleManager.getActiveVehicle()?.getActiveVehicle?.();
+  const position = activeVehicle?.chassis?.getWorldCenter?.() ?? activeVehicle?.chassis?.getPosition?.();
+  if (!position) return null;
+  return {
+    x: position.x * CELLS_PER_WORLD_UNIT,
+    y: position.y * CELLS_PER_WORLD_UNIT,
+  };
+}
+
+function getActiveVehicleRegion() {
+  const center = getActiveVehicleCellPosition();
+  if (!center) return null;
+
+  const width = Math.max(1, Math.round(controls.activeRegionWidth.value));
+  const height = Math.max(1, Math.round(controls.activeRegionHeight.value));
+  const x = axisBounds(center.x, width, state.width);
+  const y = axisBounds(center.y, height, state.height);
+  return {
+    minX: x.min,
+    maxX: x.max,
+    minY: y.min,
+    maxY: y.max,
+  };
+}
+
+function axisBounds(center, size, limit) {
+  const clampedSize = Math.max(1, Math.min(size, limit));
+  let min = Math.floor(center - clampedSize / 2);
+  let max = min + clampedSize - 1;
+
+  if (min < 0) {
+    max -= min;
+    min = 0;
+  }
+  if (max >= limit) {
+    min -= max - limit + 1;
+    max = limit - 1;
+  }
+
+  return {
+    min: Math.max(0, min),
+    max: Math.min(limit - 1, max),
+  };
+}
+
+function followActiveVehicle({ immediate = false } = {}) {
+  camera.follow(getActiveVehicleCameraTarget(), { immediate });
 }
 
 function rebuildPhysicsTerrain() {
@@ -217,17 +371,22 @@ function rebuildPhysicsTerrain() {
 }
 
 function vehicleStartPosition() {
-  const terrainTop = Math.floor(state.height * 2 / 3);
+  const worldWidth = state.width / CELLS_PER_WORLD_UNIT;
+  const worldHeight = state.height / CELLS_PER_WORLD_UNIT;
+  const terrainTop = Math.floor(worldHeight * 2 / 3);
   const vehicleClearance = 6.2;
+  const vehicleMargin = 18;
+  const topMargin = 10;
   return {
-    x: Math.max(18, Math.min(state.width - 18, Math.floor(state.width * 0.36))),
-    y: Math.max(10, Math.min(state.height - 10, Math.floor(terrainTop - vehicleClearance))),
+    x: Math.max(vehicleMargin, Math.min(worldWidth - vehicleMargin, Math.floor(worldWidth * 0.36))),
+    y: Math.max(topMargin, Math.min(worldHeight - topMargin, Math.floor(terrainTop - vehicleClearance))),
   };
 }
 
 function resetActiveVehicle() {
   const start = vehicleStartPosition();
   vehicleManager.reset(Vec2(start.x, start.y));
+  followActiveVehicle({ immediate: true });
 }
 
 function setActiveVehicleType(type) {
@@ -268,7 +427,7 @@ function stepPhysics(delta) {
     iterations++;
   }
 
-  if (vehicleManager.getActiveVehicle()?.isOutOfBounds(state.height)) {
+  if (vehicleManager.getActiveVehicle()?.isOutOfBounds(state.height / CELLS_PER_WORLD_UNIT)) {
     resetActiveVehicle();
   }
 }
@@ -278,6 +437,12 @@ function drawActiveVehicle(cellW, cellH) {
 }
 
 let pointerCell = null;
+const cameraPan = {
+  active: false,
+  pointerId: null,
+  lastX: 0,
+  lastY: 0,
+};
 
 function forEachBrushCell(cx, cy, visit) {
   const size = Math.max(1, Math.round(controls.brushSize.value));
@@ -308,6 +473,7 @@ function paintAtEvent(event) {
 }
 
 function beginPointerArmControl(event) {
+  followActiveVehicle();
   pointerArmControl.active = true;
   pointerArmControl.lastX = event.clientX;
   pointerArmControl.lastY = event.clientY;
@@ -325,7 +491,12 @@ function movePointerArmControl(event) {
   pointerArmControl.lastX = event.clientX;
   pointerArmControl.lastY = event.clientY;
 
-  vehicle.addPointerArmDelta(dx, dy, canvasLayout.cellW, canvasLayout.cellH);
+  vehicle.addPointerArmDelta(
+    dx,
+    dy,
+    canvasLayout.cellW * CELLS_PER_WORLD_UNIT * camera.currentZoom(),
+    canvasLayout.cellH * CELLS_PER_WORLD_UNIT * camera.currentZoom(),
+  );
   event.preventDefault();
 }
 
@@ -337,10 +508,38 @@ function endPointerArmControl(event) {
   event?.preventDefault();
 }
 
+function beginCameraPan(event) {
+  cameraPan.active = true;
+  cameraPan.pointerId = event.pointerId;
+  cameraPan.lastX = event.clientX;
+  cameraPan.lastY = event.clientY;
+  canvas.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function moveCameraPan(event) {
+  if (!cameraPan.active || event.pointerId !== cameraPan.pointerId) return;
+
+  const dx = event.clientX - cameraPan.lastX;
+  const dy = event.clientY - cameraPan.lastY;
+  cameraPan.lastX = event.clientX;
+  cameraPan.lastY = event.clientY;
+  camera.panByCssDelta(dx, dy);
+  pointerCell = null;
+  event.preventDefault();
+}
+
+function endCameraPan(event) {
+  if (!cameraPan.active || (event?.pointerId != null && event.pointerId !== cameraPan.pointerId)) return;
+
+  cameraPan.active = false;
+  cameraPan.pointerId = null;
+  if (event?.pointerId != null) canvas.releasePointerCapture?.(event.pointerId);
+  event?.preventDefault();
+}
+
 function cellFromEvent(event) {
-  const rect = canvas.getBoundingClientRect();
-  const x = Math.floor(((event.clientX - rect.left) / rect.width) * state.width);
-  const y = Math.floor(((event.clientY - rect.top) / rect.height) * state.height);
+  const { x, y } = camera.eventToCell(event);
   return inBounds(x, y) ? { x, y } : null;
 }
 
@@ -382,8 +581,17 @@ function frame(now = performance.now()) {
 
   stepDirt(delta);
   stepPhysics(delta);
-  render();
+  if (isVehicleControlActive()) followActiveVehicle();
+  render(delta);
   requestAnimationFrame(frame);
+}
+
+function isVehicleControlActive() {
+  if (pointerArmControl.active || joypad.active) return true;
+  for (const code of VEHICLE_CONTROL_CODES) {
+    if (activeKeys.has(code)) return true;
+  }
+  return false;
 }
 
 playPauseButton.addEventListener("click", (event) => {
@@ -408,6 +616,7 @@ clearButton.addEventListener("click", () => {
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
+  state.stressVisibility.fill(0);
   settleDirtVisualPositions();
   state.rigid.fill(0);
   state.rigidVx.fill(0);
@@ -457,6 +666,10 @@ shapeButtons.forEach((button) => {
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (event.button === 1) {
+    beginCameraPan(event);
+    return;
+  }
   if (event.button === 2) {
     beginPointerArmControl(event);
     return;
@@ -468,6 +681,10 @@ canvas.addEventListener("pointerdown", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (cameraPan.active) {
+    moveCameraPan(event);
+    return;
+  }
   if (pointerArmControl.active) {
     movePointerArmControl(event);
     return;
@@ -477,6 +694,10 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 canvas.addEventListener("pointerup", (event) => {
+  if (cameraPan.active) {
+    endCameraPan(event);
+    return;
+  }
   if (pointerArmControl.active) {
     endPointerArmControl(event);
     return;
@@ -486,6 +707,7 @@ canvas.addEventListener("pointerup", (event) => {
 });
 
 canvas.addEventListener("pointercancel", (event) => {
+  endCameraPan(event);
   endPointerArmControl(event);
   state.painting = false;
 });
@@ -498,42 +720,40 @@ canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
 });
 
+canvas.addEventListener("auxclick", (event) => {
+  if (event.button === 1) event.preventDefault();
+});
+
+canvas.addEventListener("wheel", (event) => {
+  camera.zoomAtEvent(event);
+  pointerCell = cellFromEvent(event);
+  event.preventDefault();
+}, { passive: false });
+
 window.addEventListener("keydown", (event) => {
   if (isEditableTarget(event.target)) return;
 
-  const continuousCodes = new Set([
-    "KeyA",
-    "KeyD",
-    "ArrowLeft",
-    "ArrowRight",
-    "KeyI",
-    "KeyJ",
-    "KeyK",
-    "KeyL",
-    "KeyQ",
-    "KeyE",
-    "KeyW",
-    "KeyS",
-    "ShiftLeft",
-    "ShiftRight",
-  ]);
-  if (continuousCodes.has(event.code)) {
+  if (CONTINUOUS_KEY_CODES.has(event.code)) {
     activeKeys.add(event.code);
+    if (VEHICLE_CONTROL_CODES.has(event.code)) followActiveVehicle();
     event.preventDefault();
   }
 
   if (event.repeat) return;
 
   if (event.code === "ArrowUp" || event.code === "KeyU") {
+    followActiveVehicle();
     vehicleManager.getActiveVehicle()?.flipUpright();
     event.preventDefault();
   } else if (event.code === "KeyF") {
+    followActiveVehicle();
     vehicleManager.getActiveVehicle()?.flipFacing();
     event.preventDefault();
   } else if (event.code === "KeyR") {
     resetActiveVehicle();
     event.preventDefault();
   } else if (event.code === "Space") {
+    followActiveVehicle();
     joypad.jawOpen = !joypad.jawOpen;
     event.preventDefault();
   }

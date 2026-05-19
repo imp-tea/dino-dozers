@@ -9,15 +9,14 @@ import {
   drawLoosePaperChunk,
   drawPackedCellPaper,
   drawStressMark,
-  strokePackedPaperEdge,
 } from "./paperDirtStyle.js";
 
 const STRESS_VISUAL_EASE = 0.055;
-const STRESS_EDGE_FADE_CELLS = 4;
 
 export function createDirtRenderer({ state, grid, controls, ctx, statsElement, statsCache }) {
-  const { index, inBounds } = grid;
+  const { index } = grid;
   const paperStyle = createPaperDirtStyle(ctx);
+  let visualStressActive = false;
 
   function drawCells({ cellW, cellH, dirtTween }) {
     const showStress = controls.stressView.checked;
@@ -39,7 +38,8 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
             : colorLoose(x, y, state.tick);
           const drawX = state.visualX[i] + (x - state.visualX[i]) * dirtTween;
           const drawY = state.visualY[i] + (y - state.visualY[i]) * dirtTween;
-          drawLoosePaperChunk(ctx, drawX, drawY, cellW, cellH, fillStyle);
+          if (Math.min(cellW, cellH) < 4) drawTinyCell(ctx, drawX, drawY, cellW, cellH, fillStyle);
+          else drawLoosePaperChunk(ctx, drawX, drawY, cellW, cellH, fillStyle);
           continue;
         } else if (showDamage) {
           drawPackedCellPaper(ctx, x, y, cellW, cellH, colorDamage(x, y, state.damage[i]));
@@ -65,14 +65,16 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     const showStress = controls.stressView.checked;
     const showDamage = controls.damageView.checked;
     const threshold = controls.cohesion.value;
+    const outerContours = Array.isArray(contours) ? contours : contours.outer;
+    const holeContours = Array.isArray(contours) ? [] : contours.holes;
     updateVisualStress(showStress);
 
     ctx.save();
-    for (const contour of contours) {
+    for (const contour of outerContours) {
       if (contour.length < 3) continue;
       tracePackedContour(ctx, contour, cellW, cellH);
       ctx.fillStyle = "#805739";
-      ctx.fill("evenodd");
+      ctx.fill();
 
       ctx.save();
       tracePackedContour(ctx, contour, cellW, cellH);
@@ -80,38 +82,29 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
       paperStyle.fillPaperTexture(ctx.canvas.width, ctx.canvas.height, 0.24);
       ctx.restore();
     }
+
+    ctx.fillStyle = "#2a2d29";
+    for (const contour of holeContours) {
+      if (contour.length < 3) continue;
+      tracePackedContour(ctx, contour, cellW, cellH);
+      ctx.fill();
+    }
     ctx.restore();
+
+    if (!showDamage && !showStress) return;
 
     for (let y = 0; y < state.height; y++) {
       for (let x = 0; x < state.width; x++) {
         const i = index(x, y);
         if (state.cells[i] !== PACKED) continue;
-        if (showDamage) {
-          drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i]);
-        } else if (showStress) {
-          drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i], threshold);
-        } else {
-          if (state.damage[i] > 0.1) drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i] * 0.45);
-          if (state.visualStress[i] > 0) drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i] * 0.6, threshold);
-        }
+        if (showStress && state.stressVisibility[i] <= 0) continue;
+        if (showDamage) drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i]);
+        else drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i], threshold);
       }
     }
   }
 
-  function drawPackedContourOverlay(contours, cellW, cellH) {
-    if (!controls.contourView.checked) return;
-
-    ctx.save();
-    strokePackedPaperEdge(ctx, cellW, cellH);
-
-    for (const contour of contours) {
-      if (contour.length < 3) continue;
-      tracePackedContour(ctx, contour, cellW, cellH);
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
+  function drawPackedContourOverlay() {}
 
   function drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH) {
     if (!pointerCell) return;
@@ -154,6 +147,14 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
   }
 
   function updateVisualStress(showStress) {
+    if (!showStress) {
+      if (!visualStressActive) return;
+      state.visualStress.fill(0);
+      visualStressActive = false;
+      return;
+    }
+
+    visualStressActive = true;
     const total = state.width * state.height;
     for (let i = 0; i < total; i++) {
       if (state.cells[i] !== PACKED) {
@@ -161,33 +162,10 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
         continue;
       }
 
-      const target = showStress ? state.stress[i] * stressEdgeVisibility(i) : 0;
+      const target = state.stressVisibility[i] > 0 ? state.stress[i] * state.stressVisibility[i] : 0;
       state.visualStress[i] += (target - state.visualStress[i]) * STRESS_VISUAL_EASE;
       if (Math.abs(state.visualStress[i]) < 0.001) state.visualStress[i] = 0;
     }
-  }
-
-  function stressEdgeVisibility(i) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    const distance = nearestEmptyDistance(x, y, STRESS_EDGE_FADE_CELLS);
-    if (distance < 0) return 0;
-    const t = Math.max(0, Math.min(1, 1 - (distance - 1) / (STRESS_EDGE_FADE_CELLS - 1)));
-    return t * t * (3 - 2 * t);
-  }
-
-  function nearestEmptyDistance(cx, cy, radius) {
-    for (let distance = 1; distance <= radius; distance++) {
-      for (let dy = -distance; dy <= distance; dy++) {
-        for (let dx = -distance; dx <= distance; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== distance) continue;
-          const x = cx + dx;
-          const y = cy + dy;
-          if (!inBounds(x, y) || state.cells[index(x, y)] === EMPTY) return distance;
-        }
-      }
-    }
-    return -1;
   }
 
   return {
@@ -197,6 +175,11 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     drawBrushPreview,
     updateStats,
   };
+}
+
+function drawTinyCell(ctx, x, y, cellW, cellH, fillStyle) {
+  ctx.fillStyle = fillStyle;
+  ctx.fillRect(Math.floor(x * cellW), Math.floor(y * cellH), Math.ceil(cellW), Math.ceil(cellH));
 }
 
 function tracePackedContour(ctx, contour, cellW, cellH) {

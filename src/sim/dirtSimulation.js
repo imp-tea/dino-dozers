@@ -1,9 +1,6 @@
 import { EMPTY, LOOSE, PACKED } from "./cellTypes.js";
 import { DEFAULT_MATERIAL_ID, MATERIALS } from "./materials.js";
 
-const MAX_LOOSE_SPEED = 8;
-const LOOSE_GRAVITY = 1;
-const IMPACT_BREAK_SPEED = 4;
 const RIGID_LOAD_SCALE = 0.18;
 const RIGID_BREAK_SPEED = 6;
 const RIGID_BREAK_DAMAGE = 0.0225;
@@ -49,6 +46,7 @@ export function createDirtSimulation({
   state,
   grid,
   getSettings = () => DEFAULT_SETTINGS,
+  getActiveRegion = null,
   updateRigidInfluenceGrid = () => {},
 }) {
   const {
@@ -71,41 +69,79 @@ export function createDirtSimulation({
     };
   }
 
+  let activeRegionForRigidEffects = null;
+
   function simulationStep() {
     const settings = getSettingsSnapshot();
+    const activeRegion = getActiveRegionSnapshot();
     state.tick++;
-    updateRigidInfluenceGrid();
-    updateLoose(settings);
-    analyzePackedClusters(settings);
+    activeRegionForRigidEffects = activeRegion;
+    try {
+      updateRigidInfluenceGrid();
+    } finally {
+      activeRegionForRigidEffects = null;
+    }
+    updateLoose(settings, activeRegion);
+    analyzePackedClusters(settings, activeRegion);
   }
 
-  function applyRigidTerrainEffects() {
-    const total = state.width * state.height;
-    for (let i = 0; i < total; i++) {
-      if (!state.rigid[i]) continue;
+  function getActiveRegionSnapshot() {
+    const region = getActiveRegion?.();
+    const fullRegion = {
+      minX: 0,
+      maxX: state.width - 1,
+      minY: 0,
+      maxY: state.height - 1,
+    };
+    if (!region) return fullRegion;
 
-      const x = i % state.width;
-      const y = Math.floor(i / state.width);
-      const speed = Math.hypot(state.rigidVx[i], state.rigidVy[i]);
-      const load = state.rigidMass[i] * RIGID_LOAD_SCALE;
+    const minX = Math.max(0, Math.min(state.width - 1, Math.floor(region.minX)));
+    const maxX = Math.max(0, Math.min(state.width - 1, Math.floor(region.maxX)));
+    const minY = Math.max(0, Math.min(state.height - 1, Math.floor(region.minY)));
+    const maxY = Math.max(0, Math.min(state.height - 1, Math.floor(region.maxY)));
+    return {
+      minX: Math.min(minX, maxX),
+      maxX: Math.max(minX, maxX),
+      minY: Math.min(minY, maxY),
+      maxY: Math.max(minY, maxY),
+    };
+  }
 
-      if (y < state.height - 1) {
-        const below = index(x, y + 1);
-        if (state.cells[below] === PACKED) state.externalLoad[below] += load;
+  function isInActiveRegion(x, y, activeRegion) {
+    return x >= activeRegion.minX &&
+      x <= activeRegion.maxX &&
+      y >= activeRegion.minY &&
+      y <= activeRegion.maxY;
+  }
+
+  function applyRigidTerrainEffects(activeRegion = activeRegionForRigidEffects ?? getActiveRegionSnapshot()) {
+    for (let y = activeRegion.minY; y <= activeRegion.maxY; y++) {
+      for (let x = activeRegion.minX; x <= activeRegion.maxX; x++) {
+        const i = index(x, y);
+        if (!state.rigid[i]) continue;
+
+        const speed = Math.hypot(state.rigidVx[i], state.rigidVy[i]);
+        const load = state.rigidMass[i] * RIGID_LOAD_SCALE;
+
+        if (y < activeRegion.maxY) {
+          const below = index(x, y + 1);
+          if (state.cells[below] === PACKED) state.externalLoad[below] += load;
+        }
+
+        if (state.rigidImpactMass[i] <= 0) continue;
+        if (speed < RIGID_BREAK_SPEED) continue;
+        const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidImpactMass[i]);
+        fracturePackedNearRigid(x, y, impact, state.rigidVx[i], state.rigidVy[i], activeRegion);
       }
-
-      if (state.rigidImpactMass[i] <= 0) continue;
-      if (speed < RIGID_BREAK_SPEED) continue;
-      const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidImpactMass[i]);
-      fracturePackedNearRigid(x, y, impact, state.rigidVx[i], state.rigidVy[i]);
     }
   }
 
-  function fracturePackedNearRigid(x, y, impact, vx, vy) {
+  function fracturePackedNearRigid(x, y, impact, vx, vy, activeRegion) {
     for (const [dx, dy] of RIGID_FRACTURE_OFFSETS) {
       const nx = x + dx;
       const ny = y + dy;
       if (!inBounds(nx, ny)) continue;
+      if (!isInActiveRegion(nx, ny, activeRegion)) continue;
       const i = index(nx, ny);
       if (state.cells[i] !== PACKED) continue;
 
@@ -119,89 +155,78 @@ export function createDirtSimulation({
     }
   }
 
-  function updateLoose(settings) {
-    const w = state.width;
-    const h = state.height;
+  function updateLoose(settings, activeRegion = getActiveRegionSnapshot()) {
     state.rngFlip = !state.rngFlip;
 
-    for (let y = h - 1; y >= 0; y--) {
+    for (let y = activeRegion.maxY; y >= activeRegion.minY; y--) {
       const leftToRight = (y + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0;
-      for (let n = 0; n < w; n++) {
-        const x = leftToRight ? n : w - 1 - n;
+      const width = activeRegion.maxX - activeRegion.minX + 1;
+      for (let n = 0; n < width; n++) {
+        const x = leftToRight
+          ? activeRegion.minX + n
+          : activeRegion.maxX - n;
         const i = index(x, y);
         if (state.cells[i] !== LOOSE || state.touched[i] === state.tick) continue;
-        updateLooseCell(i, settings);
+        updateLooseCell(i, settings, activeRegion);
       }
     }
   }
 
-  function updateLooseCell(start, settings) {
+  function updateLooseCell(start, settings, activeRegion) {
     if (state.cells[start] !== LOOSE) return;
     state.touched[start] = state.tick;
-    if (state.rigid[start] && pushLooseOutOfRigid(start) !== start) return;
+    if (state.rigid[start] && pushLooseOutOfRigid(start, activeRegion) !== start) return;
 
-    const previousX = start % state.width;
-    const previousY = Math.floor(start / state.width);
-    const hadVerticalVelocity = state.vy[start] !== 0;
-
-    if (previousY === state.height - 1 && state.vy[start] > 0) {
-      state.vy[start] = 0;
-    } else if (previousY < state.height - 1) {
-      state.vy[start] = clampVelocity(state.vy[start] + LOOSE_GRAVITY);
-    }
-
-    let current = attemptAxisMove(start, "y", hadVerticalVelocity, settings);
+    const moved = tryFallingSandMove(start, settings, activeRegion);
+    const current = moved >= 0 ? moved : start;
     if (current < 0 || state.cells[current] !== LOOSE) return;
 
-    const movedVertical = current !== start;
-    if (!movedVertical && state.vy[current] === 0) {
-      const slid = tryRestingSlide(current, settings);
-      if (slid >= 0 && slid !== current) current = slid;
-      if (slid < 0) return;
-
-      if (current >= 0 && state.cells[current] === LOOSE) {
-        const slumped = tryColumnSlump(current, settings);
-        if (slumped !== current) current = slumped;
-      }
-
-      if (
-        current >= 0 &&
-        state.cells[current] === LOOSE &&
-        !isNeedleTop(current) &&
-        canLooseCellPack(current) &&
-        shouldPackAgainstStableColumn(current)
-      ) {
-        setCell(current, PACKED);
-        return;
-      }
-    }
-
-    if (current >= 0 && state.cells[current] === LOOSE && state.vx[current] !== 0) {
-      current = attemptAxisMove(current, "x", true, settings);
-      if (current < 0 || state.cells[current] !== LOOSE) return;
-      applySlidingFriction(current, settings);
-    }
-
-    state.vx[current] = dampVelocity(state.vx[current]);
-    state.vy[current] = dampVelocity(state.vy[current]);
-
-    const nextX = current % state.width;
-    const nextY = Math.floor(current / state.width);
-    const isResting =
-      nextX === previousX &&
-      nextY === previousY &&
-      state.vx[current] === 0 &&
-      state.vy[current] === 0 &&
-      hasSupport(current);
-
-    if (isResting && isNeedleTop(current)) {
+    if (moved !== start) {
       state.ages[current] = 0;
-    } else if (isResting) {
-      state.ages[current]++;
-      if (state.ages[current] >= settings.settleTicks && canLooseCellPack(current)) setCell(current, PACKED);
-    } else {
-      state.ages[current] = 0;
+      return;
     }
+
+    state.vx[current] = 0;
+    state.vy[current] = 0;
+    if (!hasSupport(current)) return;
+
+    state.ages[current]++;
+    if (state.ages[current] >= settings.settleTicks && canLooseCellPack(current)) {
+      setCell(current, PACKED);
+    }
+  }
+
+  function tryFallingSandMove(i, settings, activeRegion) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    if (y >= state.height - 1) return i;
+
+    const below = tryMoveLooseTo(i, x, y + 1, activeRegion);
+    if (below >= 0) return below;
+
+    const directionFirst = (x + y + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0 ? -1 : 1;
+    const diagonalA = tryMoveLooseTo(i, x + directionFirst, y + 1, activeRegion);
+    if (diagonalA >= 0) return diagonalA;
+
+    const diagonalB = tryMoveLooseTo(i, x - directionFirst, y + 1, activeRegion);
+    if (diagonalB >= 0) return diagonalB;
+
+    if (Math.random() < settings.spread * 0.2 + settings.jitter * 0.08) {
+      const sideA = tryMoveLooseTo(i, x + directionFirst, y, activeRegion);
+      if (sideA >= 0) return sideA;
+      const sideB = tryMoveLooseTo(i, x - directionFirst, y, activeRegion);
+      if (sideB >= 0) return sideB;
+    }
+
+    return i;
+  }
+
+  function tryMoveLooseTo(from, x, y, activeRegion) {
+    if (!inBounds(x, y)) return -1;
+    if (!isInActiveRegion(x, y, activeRegion)) return -1;
+    const target = index(x, y);
+    if (!isEmptyForDirt(target)) return -1;
+    return moveLoose(from, target);
   }
 
   function moveLoose(from, to) {
@@ -221,71 +246,10 @@ export function createDirtSimulation({
   }
 
   function clampVelocity(value) {
-    return Math.max(-MAX_LOOSE_SPEED, Math.min(MAX_LOOSE_SPEED, Math.trunc(value)));
+    return Math.max(-8, Math.min(8, Math.trunc(value)));
   }
 
-  function quantizeVelocity(value) {
-    return clampVelocity(Math.trunc(value));
-  }
-
-  function reduceTowardZero(value, amount = 1) {
-    if (value === 0) return 0;
-    const next = Math.abs(value) - amount;
-    return next <= 0 ? 0 : Math.sign(value) * next;
-  }
-
-  function dampVelocity(value) {
-    return reduceTowardZero(value, 1);
-  }
-
-  function cellMass(i) {
-    return state.cells[i] === PACKED ? 3 : 1;
-  }
-
-  function exchangeMomentum(a, b, axis) {
-    if (b < 0 || state.cells[b] === EMPTY) return;
-    const av = axis === "x" ? state.vx[a] : state.vy[a];
-    const bv = axis === "x" ? state.vx[b] : state.vy[b];
-    const massA = cellMass(a);
-    const massB = cellMass(b);
-    const totalMass = massA + massB;
-    const nextA = ((massA - massB) * av + 2 * massB * bv) / totalMass;
-    const nextB = ((massB - massA) * bv + 2 * massA * av) / totalMass;
-
-    if (axis === "x") {
-      state.vx[a] = quantizeVelocity(nextA);
-      state.vx[b] = quantizeVelocity(nextB);
-    } else {
-      state.vy[a] = quantizeVelocity(nextA);
-      state.vy[b] = quantizeVelocity(nextB);
-    }
-
-    if (
-      state.cells[b] === PACKED &&
-      Math.abs(av) + Math.abs(bv) >= IMPACT_BREAK_SPEED &&
-      !hasDirectPackedColumnToGround(b)
-    ) {
-      setCell(b, LOOSE);
-      if (axis === "x") state.vx[b] = quantizeVelocity(nextB);
-      else state.vy[b] = Math.max(0, quantizeVelocity(nextB));
-      state.touched[b] = state.tick;
-    }
-  }
-
-  function collideLooseWithRigid(i, rigidCell, axis) {
-    const rigidVelocity = axis === "x" ? state.rigidVx[rigidCell] : state.rigidVy[rigidCell];
-    const kick = quantizeVelocity(rigidVelocity * 0.35);
-
-    if (axis === "x") {
-      state.vx[i] = kick;
-      state.vy[i] = reduceTowardZero(state.vy[i]);
-    } else {
-      state.vy[i] = Math.min(0, kick);
-      state.vx[i] = quantizeVelocity(state.rigidVx[rigidCell] * 0.25);
-    }
-  }
-
-  function pushLooseOutOfRigid(i) {
+  function pushLooseOutOfRigid(i, activeRegion) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
     const preferredY = state.rigidVy[i] > 0 ? -1 : 1;
@@ -300,109 +264,22 @@ export function createDirtSimulation({
 
     for (const [nx, ny] of candidates) {
       if (!inBounds(nx, ny)) continue;
+      if (!isInActiveRegion(nx, ny, activeRegion)) continue;
       const target = index(nx, ny);
       if (!isEmptyForDirt(target)) continue;
       const moved = moveLoose(i, target);
-      state.vx[moved] = quantizeVelocity(state.rigidVx[i] * 0.4);
-      state.vy[moved] = quantizeVelocity(state.rigidVy[i] * 0.4);
+      state.vx[moved] = clampVelocity(state.rigidVx[i] * 0.4);
+      state.vy[moved] = clampVelocity(state.rigidVy[i] * 0.4);
       return moved;
     }
 
     return i;
   }
 
-  function attemptAxisMove(start, axis, allowCollisionSideStep, settings) {
-    const velocity = axis === "x" ? state.vx[start] : state.vy[start];
-    if (velocity === 0 || state.cells[start] !== LOOSE) return start;
-
-    const steps = Math.abs(velocity);
-    const direction = Math.sign(velocity);
-    const startX = start % state.width;
-    const startY = Math.floor(start / state.width);
-    let openX = startX;
-    let openY = startY;
-    let open = start;
-
-    for (let step = 1; step <= steps; step++) {
-      const nx = axis === "x" ? startX + step * direction : startX;
-      const ny = axis === "y" ? startY + step * direction : startY;
-
-      if (!inBounds(nx, ny)) {
-        let current = start;
-        if (open !== start) current = moveLoose(start, open);
-        if (axis === "x") state.vx[current] = 0;
-        else state.vy[current] = 0;
-        return current;
-      }
-
-      const target = index(nx, ny);
-      if (!isEmptyForDirt(target)) {
-        let current = start;
-        if (open !== start) current = moveLoose(start, open);
-
-        if (axis === "y" && direction > 0 && steps <= 1) {
-          state.vy[current] = 0;
-          const slid = allowCollisionSideStep ? tryDiagonalFall(current, settings) : current;
-          const didSlide = slid >= 0 && slid !== current;
-          if (slid >= 0) current = slid;
-          if (
-            allowCollisionSideStep &&
-            !didSlide &&
-            !isNeedleTop(current) &&
-            canLooseCellPack(current) &&
-            shouldPackAgainstStableColumn(current)
-          ) {
-            setCell(current, PACKED);
-            return -1;
-          }
-          return current;
-        }
-
-        if (state.rigid[target]) collideLooseWithRigid(current, target, axis);
-        else exchangeMomentum(current, target, axis);
-
-        if (axis === "y" && direction > 0) {
-          state.vy[current] = 0;
-          const slid = allowCollisionSideStep ? tryDiagonalFall(current, settings) : current;
-          const didSlide = slid >= 0 && slid !== current;
-          if (slid >= 0) current = slid;
-          if (!didSlide && !isNeedleTop(current) && canLooseCellPack(current) && shouldPackAgainstStableColumn(current)) {
-            setCell(current, PACKED);
-            return -1;
-          }
-          return current;
-        }
-
-        if (axis === "x") {
-          state.vx[current] = reduceTowardZero(state.vx[current]);
-          if (state.cells[target] !== EMPTY) state.vx[target] = reduceTowardZero(state.vx[target]);
-        }
-
-        return current;
-      }
-
-      openX = nx;
-      openY = ny;
-      open = index(openX, openY);
-    }
-
-    return moveLoose(start, open);
-  }
-
   function hasSupport(i) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
     return y === state.height - 1 || isSolidForDirt(index(x, y + 1));
-  }
-
-  function hasDirectPackedColumnToGround(i) {
-    if (i < 0 || state.cells[i] !== PACKED) return false;
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    for (let yy = y; yy < state.height; yy++) {
-      if (state.cells[index(x, yy)] !== PACKED) return false;
-    }
-    return true;
   }
 
   function hasPackedNeighbor(i) {
@@ -424,96 +301,8 @@ export function createDirtSimulation({
     return state.cells[i] === LOOSE && hasPackedNeighbor(i);
   }
 
-  function shouldPackAgainstStableColumn(i) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    if (y >= state.height - 1) return false;
-    return hasDirectPackedColumnToGround(index(x, y + 1));
-  }
-
-  function tryDiagonalFall(i, settings) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    if (y >= state.height - 1) return i;
-
-    const directionFirst = (x + y + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0 ? -1 : 1;
-    const options = [directionFirst, -directionFirst];
-
-    for (const direction of options) {
-      const nx = x + direction;
-      const ny = y + 1;
-      if (!inBounds(nx, ny)) continue;
-      const target = index(nx, ny);
-      if (!isEmptyForDirt(target)) continue;
-      const moved = moveLoose(i, target);
-      state.vy[moved] = 0;
-      if (Math.random() < settings.spread) state.vx[moved] = clampVelocity(state.vx[moved] + direction);
-      return moved;
-    }
-
-    return i;
-  }
-
-  function tryRestingSlide(i, settings) {
-    if (state.vy[i] !== 0 || !hasSupport(i)) return i;
-    return tryDiagonalFall(i, settings);
-  }
-
-  function tryColumnSlump(i, settings) {
-    if (state.cells[i] !== LOOSE || !hasSupport(i)) return i;
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    if (y >= state.height - 1) return i;
-    if (!isNeedleTop(i)) return i;
-
-    const slumpChance = Math.max(0.42, settings.jitter + settings.spread * 0.45);
-    if (Math.random() > slumpChance) return i;
-
-    const directionFirst = (x + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0 ? -1 : 1;
-    for (const direction of [directionFirst, -directionFirst]) {
-      const nx = x + direction;
-      if (!inBounds(nx, y)) continue;
-      const target = index(nx, y);
-      if (!isEmptyForDirt(target)) continue;
-      const moved = moveLoose(i, target);
-      state.vx[moved] = direction;
-      state.ages[moved] = 0;
-      return moved;
-    }
-
-    return i;
-  }
-
-  function isNeedleTop(i) {
-    if (state.cells[i] !== LOOSE || !hasSupport(i)) return false;
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    if (y >= state.height - 1) return false;
-
-    const leftEmpty = inBounds(x - 1, y) && isEmptyForDirt(index(x - 1, y));
-    const rightEmpty = inBounds(x + 1, y) && isEmptyForDirt(index(x + 1, y));
-    if (!leftEmpty && !rightEmpty) return false;
-
-    const hasLeftShoulder = inBounds(x - 1, y + 1) && isSolidForDirt(index(x - 1, y + 1));
-    const hasRightShoulder = inBounds(x + 1, y + 1) && isSolidForDirt(index(x + 1, y + 1));
-    return !hasLeftShoulder || !hasRightShoulder;
-  }
-
-  function applySlidingFriction(i, settings) {
-    if (state.vx[i] === 0 || !hasSupport(i)) return;
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    const below = y < state.height - 1 ? index(x, y + 1) : -1;
-    const friction =
-      below < 0 || state.cells[below] === PACKED || state.rigid[below]
-        ? 2
-        : 1 + Math.round(settings.jitter * 4);
-    state.vx[i] = reduceTowardZero(state.vx[i], friction);
-  }
-
-  function analyzePackedClusters(settings) {
-    state.stress.fill(0);
-    const total = state.width * state.height;
+  function analyzePackedClusters(settings, activeRegion = getActiveRegionSnapshot()) {
+    clearActiveRegionStress(activeRegion);
     const seen = state.clusterSeen;
     const cluster = state.clusterCells;
     const queue = state.clusterQueue;
@@ -522,30 +311,42 @@ export function createDirtSimulation({
     if (state.clusterSeenToken === 1) seen.fill(0);
     const seenToken = state.clusterSeenToken;
 
-    for (let i = 0; i < total; i++) {
-      if (state.cells[i] !== PACKED || seen[i] === seenToken) continue;
-      cluster.length = 0;
-      queue.length = 0;
-      queue.push(i);
-      seen[i] = seenToken;
+    for (let y = activeRegion.minY; y <= activeRegion.maxY; y++) {
+      for (let x = activeRegion.minX; x <= activeRegion.maxX; x++) {
+        const i = index(x, y);
+        if (state.cells[i] !== PACKED || seen[i] === seenToken) continue;
+        cluster.length = 0;
+        queue.length = 0;
+        queue.push(i);
+        seen[i] = seenToken;
 
-      for (let q = 0; q < queue.length; q++) {
-        const current = queue[q];
-        cluster.push(current);
-        const x = current % state.width;
-        const y = Math.floor(current / state.width);
-        addPackedNeighbor(x - 1, y, seen, seenToken, queue);
-        addPackedNeighbor(x + 1, y, seen, seenToken, queue);
-        addPackedNeighbor(x, y - 1, seen, seenToken, queue);
-        addPackedNeighbor(x, y + 1, seen, seenToken, queue);
+        for (let q = 0; q < queue.length; q++) {
+          const current = queue[q];
+          cluster.push(current);
+          const cx = current % state.width;
+          const cy = Math.floor(current / state.width);
+          addPackedNeighbor(cx - 1, cy, seen, seenToken, queue, activeRegion);
+          addPackedNeighbor(cx + 1, cy, seen, seenToken, queue, activeRegion);
+          addPackedNeighbor(cx, cy - 1, seen, seenToken, queue, activeRegion);
+          addPackedNeighbor(cx, cy + 1, seen, seenToken, queue, activeRegion);
+        }
+
+        processCluster(cluster, settings, activeRegion);
       }
-
-      processCluster(cluster, settings);
     }
   }
 
-  function addPackedNeighbor(x, y, seen, seenToken, queue) {
+  function clearActiveRegionStress(activeRegion) {
+    for (let y = activeRegion.minY; y <= activeRegion.maxY; y++) {
+      for (let x = activeRegion.minX; x <= activeRegion.maxX; x++) {
+        state.stress[index(x, y)] = 0;
+      }
+    }
+  }
+
+  function addPackedNeighbor(x, y, seen, seenToken, queue, activeRegion) {
     if (!inBounds(x, y)) return;
+    if (!isInActiveRegion(x, y, activeRegion)) return;
     const i = index(x, y);
     if (seen[i] === seenToken || state.cells[i] !== PACKED) return;
     seen[i] = seenToken;
@@ -558,12 +359,11 @@ export function createDirtSimulation({
     return y < state.height - 1 && state.rigid[index(x, y + 1)] !== 0;
   }
 
-  function processCluster(cluster, settings) {
+  function processCluster(cluster, settings, activeRegion) {
     let grounded = false;
-    const h = state.height;
 
     for (const i of cluster) {
-      if (Math.floor(i / state.width) === h - 1 || hasRigidSupport(i)) {
+      if (hasClusterSupport(i, activeRegion)) {
         grounded = true;
         break;
       }
@@ -574,11 +374,27 @@ export function createDirtSimulation({
       return;
     }
 
-    const distances = computeSupportDistances(cluster, settings.bridgePenalty);
-    routeClusterLoad(cluster, distances, settings);
+    const distances = computeSupportDistances(cluster, settings.bridgePenalty, activeRegion);
+    routeClusterLoad(cluster, distances, settings, activeRegion);
   }
 
-  function computeSupportDistances(cluster, bridgePenalty) {
+  function hasClusterSupport(i, activeRegion) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    if (y === state.height - 1 || hasRigidSupport(i)) return true;
+
+    for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (isInActiveRegion(nx, ny, activeRegion)) continue;
+      if (state.cells[index(nx, ny)] === PACKED) return true;
+    }
+
+    return false;
+  }
+
+  function computeSupportDistances(cluster, bridgePenalty, activeRegion) {
     const distances = state.supportDistances;
     const queue = state.supportQueue;
     let head = 0;
@@ -587,8 +403,7 @@ export function createDirtSimulation({
     for (const i of cluster) distances[i] = Number.POSITIVE_INFINITY;
 
     for (const i of cluster) {
-      const y = Math.floor(i / state.width);
-      if (y === state.height - 1 || hasRigidSupport(i)) {
+      if (hasClusterSupport(i, activeRegion)) {
         distances[i] = 0;
         queue.push(i);
       }
@@ -598,17 +413,18 @@ export function createDirtSimulation({
       const current = queue[head++];
       const x = current % state.width;
       const y = Math.floor(current / state.width);
-      relaxSupportNeighbor(x - 1, y, current, distances, bridgePenalty, queue);
-      relaxSupportNeighbor(x + 1, y, current, distances, bridgePenalty, queue);
-      relaxSupportNeighbor(x, y - 1, current, distances, bridgePenalty, queue);
-      relaxSupportNeighbor(x, y + 1, current, distances, bridgePenalty, queue);
+      relaxSupportNeighbor(x - 1, y, current, distances, bridgePenalty, queue, activeRegion);
+      relaxSupportNeighbor(x + 1, y, current, distances, bridgePenalty, queue, activeRegion);
+      relaxSupportNeighbor(x, y - 1, current, distances, bridgePenalty, queue, activeRegion);
+      relaxSupportNeighbor(x, y + 1, current, distances, bridgePenalty, queue, activeRegion);
     }
 
     return distances;
   }
 
-  function relaxSupportNeighbor(x, y, from, distances, bridgePenalty, queue) {
+  function relaxSupportNeighbor(x, y, from, distances, bridgePenalty, queue, activeRegion) {
     if (!inBounds(x, y)) return;
+    if (!isInActiveRegion(x, y, activeRegion)) return;
     const next = index(x, y);
     if (state.cells[next] !== PACKED) return;
     const fx = from % state.width;
@@ -625,7 +441,7 @@ export function createDirtSimulation({
     queue.push(next);
   }
 
-  function routeClusterLoad(cluster, distances, settings) {
+  function routeClusterLoad(cluster, distances, settings, activeRegion) {
     const loads = state.supportLoads;
     const particleWeight = settings.weight;
     const threshold = settings.cohesion;
@@ -636,10 +452,12 @@ export function createDirtSimulation({
 
     for (const i of cluster) {
       loads[i] += particleWeight + looseOverburden(i, particleWeight) + state.externalLoad[i];
-      const parent = bestSupportParent(i, distances);
+      const parent = bestSupportParent(i, distances, activeRegion);
       const bending = bendingPenalty(i, distances);
       const bearing = bearingPenalty(i);
-      state.stress[i] = (loads[i] * (1 + bending + bearing)) / supportRelief(i);
+      state.stress[i] = isConfinedPackedCell(i)
+        ? 0
+        : (loads[i] * (1 + bending + bearing)) / supportRelief(i);
 
       if (parent >= 0) {
         loads[parent] += loads[i];
@@ -661,6 +479,25 @@ export function createDirtSimulation({
     }
   }
 
+  function isConfinedPackedCell(i) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+
+    for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) {
+        if (ny >= state.height) continue;
+        return false;
+      }
+
+      const neighbor = index(nx, ny);
+      if (state.cells[neighbor] !== PACKED && state.rigid[neighbor] === 0) return false;
+    }
+
+    return true;
+  }
+
   function looseOverburden(i, particleWeight) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
@@ -673,7 +510,7 @@ export function createDirtSimulation({
     return load;
   }
 
-  function bestSupportParent(i, distances) {
+  function bestSupportParent(i, distances, activeRegion) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
     let best = -1;
@@ -683,6 +520,7 @@ export function createDirtSimulation({
       const nx = x + dx;
       const ny = y + dy;
       if (!inBounds(nx, ny)) continue;
+      if (!isInActiveRegion(nx, ny, activeRegion)) continue;
       const ni = index(nx, ny);
       if (state.cells[ni] !== PACKED) continue;
       if (distances[ni] < bestDistance) {

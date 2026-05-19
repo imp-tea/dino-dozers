@@ -29,6 +29,8 @@ export function getControls() {
     spread: bindRange("spread", Number),
     jitter: bindRange("jitter", Number),
     speed: bindRange("speed", Number),
+    activeRegionWidth: bindRange("activeRegionWidth", Number),
+    activeRegionHeight: bindRange("activeRegionHeight", Number),
     gridWidth: bindRange("gridWidth", Number),
     gridHeight: bindRange("gridHeight", Number),
     stressView: document.querySelector("#stressView"),

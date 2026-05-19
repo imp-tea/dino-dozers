@@ -11,6 +11,7 @@ export function createGridState({ width, height }) {
     damage: null,
     stress: null,
     visualStress: null,
+    stressVisibility: null,
     visualX: null,
     visualY: null,
     rigid: null,
@@ -53,6 +54,7 @@ export function createGrid(state, callbacks = {}) {
     state.damage = new Float32Array(total);
     state.stress = new Float32Array(total);
     state.visualStress = new Float32Array(total);
+    state.stressVisibility = new Float32Array(total);
     state.visualX = new Float32Array(total);
     state.visualY = new Float32Array(total);
     state.rigid = new Uint8Array(total);
@@ -107,6 +109,7 @@ export function createGrid(state, callbacks = {}) {
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;
+    state.stressVisibility[i] = 0;
     state.vx[i] = 0;
     state.vy[i] = 0;
     state.touched[i] = 0;
@@ -122,6 +125,7 @@ export function createGrid(state, callbacks = {}) {
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;
+    state.stressVisibility[i] = 0;
     state.vx[i] = 0;
     state.vy[i] = 0;
     state.touched[i] = 0;
