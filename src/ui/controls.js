@@ -34,6 +34,7 @@ export function getControls() {
     stressView: document.querySelector("#stressView"),
     damageView: document.querySelector("#damageView"),
     contourView: document.querySelector("#contourView"),
+    debugView: document.querySelector("#debugView"),
     resetVehicle: document.querySelector("#resetVehicle"),
     vehicleType: document.querySelector("#vehicleType"),
     unifiedColor: document.querySelector("#unifiedColor"),

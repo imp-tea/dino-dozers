@@ -4,6 +4,7 @@ import { createPhysicsTerrain } from "./physics/terrain.js";
 import { createInputState } from "./input/inputState.js";
 import { createCanvasLayout } from "./render/canvasLayout.js";
 import { createDirtRenderer } from "./render/dirtRenderer.js";
+import { drawPlanckDebugView } from "./render/planckDebugRenderer.js";
 import { EMPTY, LOOSE, PACKED } from "./sim/cellTypes.js";
 import { createDirtSimulation } from "./sim/dirtSimulation.js";
 import { createGrid, createGridState } from "./sim/grid.js";
@@ -206,6 +207,7 @@ function render() {
   dirtRenderer.drawCells({ cellW, cellH, dirtTween });
   dirtRenderer.drawPackedContourOverlay(packedContours, cellW, cellH);
   drawActiveVehicle(cellW, cellH);
+  if (controls.debugView.checked) drawPlanckDebugView(ctx, physicsWorld, { cellW, cellH });
   dirtRenderer.drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH);
   dirtRenderer.updateStats();
 }
