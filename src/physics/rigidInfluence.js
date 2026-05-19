@@ -2,7 +2,13 @@ import { Vec2 } from "planck";
 import { PACKED } from "../sim/cellTypes.js";
 
 export function createRigidInfluence({ state, grid, applyTerrainEffects = () => {} }) {
-  const { index } = grid;
+  const {
+    index,
+    inBounds,
+    setCell,
+    clearCell,
+    isEmptyForDirt,
+  } = grid;
   const bodyGroups = new Map();
   let rigidVelocityMass = new Float32Array(0);
 
@@ -51,6 +57,7 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
       if (!group.affectsTerrain) continue;
       for (const body of group.bodies) {
         rasterizeRigidBody(body, group);
+        flattenPackedTerrainForBody(body);
       }
       if (group.distributeLoadToContacts) distributeGroupLoadToContactCells(group);
     }
@@ -120,6 +127,88 @@ export function createRigidInfluence({ state, grid, applyTerrainEffects = () => 
   function getBodyTerrainImpactScale(body) {
     const userData = body.getUserData?.();
     return userData?.terrainDamageScale ?? 1;
+  }
+
+  function getBodyTerrainFlattenConfig(body) {
+    const userData = body.getUserData?.();
+    const angularSpeed = userData?.terrainFlattenAngularSpeed ?? 0;
+    const depth = userData?.terrainFlattenDepth ?? 0;
+    if (angularSpeed <= 0 || depth <= 0) return null;
+    return {
+      angularSpeed,
+      depth: Math.max(1, Math.trunc(depth)),
+    };
+  }
+
+  function flattenPackedTerrainForBody(body) {
+    const config = getBodyTerrainFlattenConfig(body);
+    if (!config || Math.abs(body.getAngularVelocity?.() ?? 0) < config.angularSpeed) return;
+
+    for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
+      const shape = fixture.getShape();
+      if (shape.m_radius == null) continue;
+      flattenPackedTerrainUnderCircle(body, shape, config.depth);
+    }
+  }
+
+  function flattenPackedTerrainUnderCircle(body, shape, depth) {
+    const center = shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition();
+    const radius = shape.m_radius;
+    const minX = Math.max(0, Math.floor(center.x - radius));
+    const maxX = Math.min(state.width - 1, Math.ceil(center.x + radius));
+    const minY = Math.max(0, Math.floor(center.y));
+    const maxY = Math.min(state.height - 1, Math.ceil(center.y + radius + depth));
+    const radiusSq = radius * radius;
+    const candidates = [];
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const dx = x + 0.5 - center.x;
+        const dy = Math.max(0, y + 0.5 - center.y);
+        if (dx * dx + dy * dy > radiusSq + depth * depth) continue;
+        const i = index(x, y);
+        if (state.cells[i] === PACKED) candidates.push(i);
+      }
+    }
+
+    candidates.sort((a, b) => b - a);
+    for (const i of candidates) movePackedCellDown(i, depth);
+  }
+
+  function movePackedCellDown(i, depth) {
+    if (state.cells[i] !== PACKED) return false;
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    const target = findPackedFlattenTarget(x, y, depth);
+    if (target < 0 || target === i) return false;
+
+    const visualX = state.visualX[i];
+    const visualY = state.visualY[i];
+    setCell(target, PACKED);
+    state.visualX[target] = visualX;
+    state.visualY[target] = visualY;
+    clearCell(i, false);
+    state.touched[target] = state.tick;
+    return true;
+  }
+
+  function findPackedFlattenTarget(x, y, depth) {
+    for (let dy = Math.min(depth, state.height - 1 - y); dy >= 1; dy--) {
+      for (const dx of flattenDxOrder(dy)) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const target = index(nx, ny);
+        if (isEmptyForDirt(target)) return target;
+      }
+    }
+    return -1;
+  }
+
+  function flattenDxOrder(depth) {
+    const order = [0];
+    for (let x = 1; x <= depth; x++) order.push(-x, x);
+    return order;
   }
 
   function findPackedContactCells(body) {

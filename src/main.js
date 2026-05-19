@@ -19,8 +19,6 @@ import { createWreckersaurusVehicle } from "./vehicles/wreckersaurus/factory.js"
 const PHYSICS_STEP_SECONDS = 1 / 60;
 const DIRT_STEP_SECONDS = 1 / 30;
 const DIRT_MAX_FRAME_SLICES = 3;
-const PACKED_CONTOUR_FILL = "#76533a";
-const PACKED_CONTOUR_STROKE = "#3f2518";
 
 const canvas = document.querySelector("#sim");
 const ctx = canvas.getContext("2d");
@@ -203,59 +201,13 @@ function render() {
   const cellH = canvasLayout.cellH;
   const dirtTween = dirtTweenProgress();
 
-  drawPackedContourFill(cellW, cellH);
+  const packedContours = packedContourCache.getContours();
+  dirtRenderer.drawPackedContourFill(packedContours, cellW, cellH);
   dirtRenderer.drawCells({ cellW, cellH, dirtTween });
-  drawPackedContourOverlay(cellW, cellH);
+  dirtRenderer.drawPackedContourOverlay(packedContours, cellW, cellH);
   drawActiveVehicle(cellW, cellH);
   dirtRenderer.drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH);
   dirtRenderer.updateStats();
-}
-
-function tracePackedContour(contour, cellW, cellH) {
-  ctx.beginPath();
-  ctx.moveTo(contour[0].x * cellW, contour[0].y * cellH);
-  for (let i = 1; i < contour.length; i++) {
-    ctx.lineTo(contour[i].x * cellW, contour[i].y * cellH);
-  }
-  ctx.closePath();
-}
-
-function drawPackedContourFill(cellW, cellH) {
-  if (!controls.contourView.checked) return;
-
-  const contours = packedContourCache.getContours();
-
-  ctx.save();
-  ctx.fillStyle = PACKED_CONTOUR_FILL;
-
-  for (const contour of contours) {
-    if (contour.length < 3) continue;
-    tracePackedContour(contour, cellW, cellH);
-    ctx.fill("evenodd");
-  }
-
-  ctx.restore();
-}
-
-function drawPackedContourOverlay(cellW, cellH) {
-  if (!controls.contourView.checked) return;
-
-  const contours = packedContourCache.getContours();
-
-  ctx.save();
-  ctx.globalAlpha = 0.95;
-  ctx.strokeStyle = PACKED_CONTOUR_STROKE;
-  ctx.lineWidth = Math.max(1.5, Math.min(cellW, cellH) * 0.7);
-  ctx.lineJoin = "bevel";
-  ctx.lineCap = "butt";
-
-  for (const contour of contours) {
-    if (contour.length < 3) continue;
-    tracePackedContour(contour, cellW, cellH);
-    ctx.stroke();
-  }
-
-  ctx.restore();
 }
 
 function rebuildPhysicsTerrain() {

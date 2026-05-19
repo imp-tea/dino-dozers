@@ -7,13 +7,13 @@ export const WRECKERSAURUS_MOTOR_TORQUE = 980;
 export const WRECKERSAURUS_WHEEL_FRICTION = 9.5;
 export const WRECKERSAURUS_SUSPENSION_FREQUENCY = 7.4;
 export const WRECKERSAURUS_SUSPENSION_DAMPING = 0.74;
-export const WRECKERSAURUS_CHASSIS_DENSITY = 0.82;
-export const WRECKERSAURUS_WHEEL_DENSITY = 1.2;
+export const WRECKERSAURUS_CHASSIS_DENSITY = 0.75;
+export const WRECKERSAURUS_WHEEL_DENSITY = 2.0;
 export const WRECKERSAURUS_ARM_SPEED = 2.7;
-export const WRECKERSAURUS_DIRECT_TARGET_SPEED = 9.2;
-export const WRECKERSAURUS_DIRECT_HEAD_TURN_SPEED = 1.45;
+export const WRECKERSAURUS_DIRECT_TARGET_SPEED = 10.0;
+export const WRECKERSAURUS_DIRECT_HEAD_TURN_SPEED = 2.0;
 export const WRECKERSAURUS_JAW_OPEN_ANGLE = 0.48;
-export const WRECKERSAURUS_JAW_CLOSED_ANGLE = -0.2;
+export const WRECKERSAURUS_JAW_CLOSED_ANGLE = 0.0;
 export const WRECKERSAURUS_COLLISION_GROUP = -3;
 export const WRECKERSAURUS_FACING_RIGHT = 1;
 export const WRECKERSAURUS_FACING_LEFT = -1;
@@ -25,6 +25,6 @@ export const WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER = 0.78;
 export const WRECKERSAURUS_ARM_SERVO = {
   boomAngle: { gain: 3.1, damping: 0.28, speedScale: 1 },
   stickAngle: { gain: 2.8, damping: 0.34, speedScale: 1.02 },
-  headAngle: { gain: 1.55, damping: 0.72, speedScale: 0.7 },
-  jawAngle: { gain: 1.45, damping: 0.68, speedScale: 0.82 },
+  headAngle: { gain: 1.55, damping: 0.72, speedScale: 1.5 },
+  jawAngle: { gain: 1.45, damping: 0.68, speedScale: 1.5 },
 };

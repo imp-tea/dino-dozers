@@ -19,12 +19,17 @@ import {
   ROLLERSAURUS_GAMEPAD_DEADZONE,
   ROLLERSAURUS_MOTOR_TORQUE,
   ROLLERSAURUS_ROLLER_DENSITY,
+  ROLLERSAURUS_ROLLER_FLATTEN_ANGULAR_SPEED,
+  ROLLERSAURUS_ROLLER_FLATTEN_DEPTH,
   ROLLERSAURUS_ROLLER_FRICTION,
   ROLLERSAURUS_SUSPENSION_DAMPING,
   ROLLERSAURUS_SUSPENSION_FREQUENCY,
   ROLLERSAURUS_WHEEL_DENSITY,
   ROLLERSAURUS_WHEEL_FRICTION,
 } from "./config.js";
+
+const ROLLERSAURUS_BASE_ART_SCALE = 0.012;
+const ROLLERSAURUS_BODY_SCALE = ROLLERSAURUS_ART_SCALE / ROLLERSAURUS_BASE_ART_SCALE;
 
 export function createRollersaurusVehicle({ world, ctx, input }) {
   const physicsWorld = world;
@@ -94,7 +99,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
         Vec2(6.0, -2.36),
         Vec2(5.64, 0.64),
         Vec2(-5.92, 0.86),
-      ], direction)),
+      ], direction).map(scaleBodyVertex)),
       density: ROLLERSAURUS_CHASSIS_DENSITY,
       friction: 0.78,
       restitution: 0,
@@ -107,7 +112,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
         Vec2(3.95, -4.4),
         Vec2(3.45, -2.8),
         Vec2(-4.82, -2.62),
-      ], direction)),
+      ], direction).map(scaleBodyVertex)),
       density: ROLLERSAURUS_CHASSIS_DENSITY * 0.55,
       friction: 0.72,
       restitution: 0,
@@ -137,6 +142,8 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
         part: "wheel",
         subtype: "roller",
         terrainContactLoadScale: 8.5,
+        terrainFlattenAngularSpeed: ROLLERSAURUS_ROLLER_FLATTEN_ANGULAR_SPEED,
+        terrainFlattenDepth: ROLLERSAURUS_ROLLER_FLATTEN_DEPTH,
       }),
     ];
 
@@ -192,6 +199,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
       local,
       radius,
       imageKey,
+      subtype,
       joint,
     };
   }
@@ -207,6 +215,10 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
   function mirrorVertices(vertices, facing) {
     const converted = vertices.map((vertex) => Vec2(vertex.x * facing, vertex.y));
     return facing === ROLLERSAURUS_FACING_RIGHT ? converted : converted.reverse();
+  }
+
+  function scaleBodyVertex(vertex) {
+    return Vec2(vertex.x * ROLLERSAURUS_BODY_SCALE, vertex.y * ROLLERSAURUS_BODY_SCALE);
   }
 
   function updateActiveVehicleMotor(dt) {
@@ -326,8 +338,9 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     if (!activeVehicle) return;
 
     ctx.save();
+    drawRollersaurusWheels(cellW, cellH, (wheel) => wheel.subtype === "roller");
     drawRollersaurusChassis(cellW, cellH);
-    drawRollersaurusWheels(cellW, cellH);
+    drawRollersaurusWheels(cellW, cellH, (wheel) => wheel.subtype !== "roller");
     ctx.restore();
   }
 
@@ -344,8 +357,9 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     );
   }
 
-  function drawRollersaurusWheels(cellW, cellH) {
+  function drawRollersaurusWheels(cellW, cellH, shouldDraw = () => true) {
     for (const wheel of activeVehicle.wheels) {
+      if (!shouldDraw(wheel)) continue;
       const svg = rollersaurusSvg[wheel.imageKey];
       drawSvgAtAnchor(
         rollersaurusImages[wheel.imageKey],

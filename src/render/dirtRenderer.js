@@ -1,19 +1,23 @@
 import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
+import {
+  colorDamage,
+  colorLoose,
+  colorPacked,
+  colorStress,
+  createPaperDirtStyle,
+  drawDamageTear,
+  drawLoosePaperChunk,
+  drawPackedCellPaper,
+  drawStressMark,
+  strokePackedPaperEdge,
+} from "./paperDirtStyle.js";
 
 const STRESS_VISUAL_EASE = 0.055;
 const STRESS_EDGE_FADE_CELLS = 6;
-const PACKED_COLOR_CHANNELS = Array.from({ length: 16 }, (_, shade) => ({
-  r: 118 + shade,
-  g: 83 + Math.floor(shade * 0.35),
-  b: 58,
-}));
-const PACKED_COLORS = PACKED_COLOR_CHANNELS.map(({ r, g, b }) => `rgb(${r}, ${g}, ${b})`);
-const LOOSE_COLORS = Array.from({ length: 19 }, (_, shade) => {
-  return `rgb(${178 + shade}, ${129 + Math.floor(shade * 0.45)}, ${70 + Math.floor(shade * 0.25)})`;
-});
 
 export function createDirtRenderer({ state, grid, controls, ctx, statsElement, statsCache }) {
   const { index, inBounds } = grid;
+  const paperStyle = createPaperDirtStyle(ctx);
 
   function drawCells({ cellW, cellH, dirtTween }) {
     const showStress = controls.stressView.checked;
@@ -30,33 +34,83 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
         if (cell === PACKED && showPackedContours) continue;
 
         if (cell === LOOSE) {
-          ctx.fillStyle = controls.unifiedColor.checked
+          const fillStyle = controls.unifiedColor.checked
             ? colorPacked(x, y)
             : colorLoose(x, y, state.tick);
           const drawX = state.visualX[i] + (x - state.visualX[i]) * dirtTween;
           const drawY = state.visualY[i] + (y - state.visualY[i]) * dirtTween;
-          ctx.fillRect(
-            drawX * cellW,
-            drawY * cellH,
-            Math.ceil(cellW),
-            Math.ceil(cellH),
-          );
+          drawLoosePaperChunk(ctx, drawX, drawY, cellW, cellH, fillStyle);
           continue;
         } else if (showDamage) {
-          ctx.fillStyle = colorDamage(x, y, state.damage[i]);
+          drawPackedCellPaper(ctx, x, y, cellW, cellH, colorDamage(x, y, state.damage[i]));
+          drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i]);
+          continue;
         } else if (showStress) {
-          ctx.fillStyle = colorStress(x, y, state.visualStress[i], threshold);
+          drawPackedCellPaper(ctx, x, y, cellW, cellH, colorStress(x, y, state.visualStress[i], threshold));
+          drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i], threshold);
+          continue;
         } else {
-          ctx.fillStyle = colorPacked(x, y);
+          drawPackedCellPaper(ctx, x, y, cellW, cellH, colorPacked(x, y));
+          if (state.damage[i] > 0.1) drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i] * 0.45);
+          if (state.visualStress[i] > 0) drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i] * 0.6, threshold);
+          continue;
         }
-        ctx.fillRect(
-          Math.floor(x * cellW),
-          Math.floor(y * cellH),
-          Math.ceil(cellW),
-          Math.ceil(cellH),
-        );
       }
     }
+  }
+
+  function drawPackedContourFill(contours, cellW, cellH) {
+    if (!controls.contourView.checked) return;
+
+    const showStress = controls.stressView.checked;
+    const showDamage = controls.damageView.checked;
+    const threshold = controls.cohesion.value;
+    updateVisualStress(showStress);
+
+    ctx.save();
+    for (const contour of contours) {
+      if (contour.length < 3) continue;
+      tracePackedContour(ctx, contour, cellW, cellH);
+      ctx.fillStyle = "#805739";
+      ctx.fill("evenodd");
+
+      ctx.save();
+      tracePackedContour(ctx, contour, cellW, cellH);
+      ctx.clip("evenodd");
+      paperStyle.fillPaperTexture(ctx.canvas.width, ctx.canvas.height, 0.24);
+      ctx.restore();
+    }
+    ctx.restore();
+
+    for (let y = 0; y < state.height; y++) {
+      for (let x = 0; x < state.width; x++) {
+        const i = index(x, y);
+        if (state.cells[i] !== PACKED) continue;
+        if (showDamage) {
+          drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i]);
+        } else if (showStress) {
+          drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i], threshold);
+        } else {
+          if (state.damage[i] > 0.1) drawDamageTear(ctx, x, y, cellW, cellH, state.damage[i] * 0.45);
+          if (state.visualStress[i] > 0) drawStressMark(ctx, x, y, cellW, cellH, state.visualStress[i] * 0.6, threshold);
+        }
+      }
+    }
+  }
+
+  function drawPackedContourOverlay(contours, cellW, cellH) {
+    if (!controls.contourView.checked) return;
+
+    ctx.save();
+    strokePackedPaperEdge(ctx, cellW, cellH);
+
+    for (const contour of contours) {
+      if (contour.length < 3) continue;
+      tracePackedContour(ctx, contour, cellW, cellH);
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 
   function drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH) {
@@ -138,38 +192,18 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
 
   return {
     drawCells,
+    drawPackedContourFill,
+    drawPackedContourOverlay,
     drawBrushPreview,
     updateStats,
   };
 }
 
-export function colorLoose(x, y, tick) {
-  const shade = (x * 13 + y * 7 + tick) % 19;
-  return LOOSE_COLORS[shade];
-}
-
-export function colorPacked(x, y) {
-  const shade = (x * 11 + y * 5) % 16;
-  return PACKED_COLORS[shade];
-}
-
-function colorDamage(x, y, damage) {
-  const shade = (x * 11 + y * 5) % 16;
-  const color = PACKED_COLOR_CHANNELS[shade];
-  const fracture = Math.min(1, Math.max(0, damage));
-  const r = Math.floor(color.r + fracture * 52);
-  const g = Math.floor(color.g - fracture * 16);
-  const b = Math.floor(color.b - fracture * 30);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-function colorStress(x, y, stress, threshold) {
-  const shade = (x * 11 + y * 5) % 16;
-  const color = PACKED_COLOR_CHANNELS[shade];
-  const pressure = Math.min(1, Math.max(0, stress / Math.max(threshold, 1)));
-  const darken = Math.floor(pressure * 34);
-  const r = Math.max(78, color.r - darken);
-  const g = Math.max(56, color.g - Math.floor(darken * 0.72));
-  const b = Math.max(39, color.b - Math.floor(darken * 0.48));
-  return `rgb(${r}, ${g}, ${b})`;
+function tracePackedContour(ctx, contour, cellW, cellH) {
+  ctx.beginPath();
+  ctx.moveTo(contour[0].x * cellW, contour[0].y * cellH);
+  for (let i = 1; i < contour.length; i++) {
+    ctx.lineTo(contour[i].x * cellW, contour[i].y * cellH);
+  }
+  ctx.closePath();
 }
