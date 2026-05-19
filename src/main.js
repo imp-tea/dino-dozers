@@ -7,6 +7,7 @@ import { createCanvasLayout } from "./render/canvasLayout.js";
 import { createDirtRenderer } from "./render/dirtRenderer.js";
 import { drawPlanckDebugView } from "./render/planckDebugRenderer.js";
 import { EMPTY, LOOSE, PACKED } from "./sim/cellTypes.js";
+import { createActivityGrid } from "./sim/activityGrid.js";
 import { createDirtSimulation } from "./sim/dirtSimulation.js";
 import { createGrid, createGridState } from "./sim/grid.js";
 import { createPackedContourCache } from "./sim/packedContours.js";
@@ -96,12 +97,17 @@ const camera = createCamera({
   layout: canvasLayout,
   state,
 });
+const activityGrid = createActivityGrid({ state });
 
 const grid = createGrid(state, {
   markCanvasLayoutDirty,
   markStatsDirty,
   markPackedTerrainDirty,
-  onResize: seedWorld,
+  markCellActive: (i) => activityGrid.wakeIndex(i),
+  onResize: () => {
+    activityGrid.resize();
+    seedWorld();
+  },
 });
 
 const {
@@ -110,6 +116,7 @@ const {
   inBounds,
   setCell,
   clearCell,
+  resetCellCounts,
   settleDirtVisualPositions,
 } = grid;
 const dirtRenderer = createDirtRenderer({
@@ -126,6 +133,7 @@ const dirtSimulation = createDirtSimulation({
   grid,
   getSettings: getSimulationSettings,
   getActiveRegion: getActiveVehicleRegion,
+  activityGrid,
   updateRigidInfluenceGrid,
 });
 const { simulationStep } = dirtSimulation;
@@ -139,11 +147,16 @@ const rigidInfluence = createRigidInfluence({
   state,
   grid,
   cellsPerWorldUnit: CELLS_PER_WORLD_UNIT,
-  applyTerrainEffects: () => dirtSimulation.applyRigidTerrainEffects(),
+  applyTerrainEffects: (markRigidTouchedCell) => dirtSimulation.applyRigidTerrainEffects(markRigidTouchedCell),
 });
 
 function markStatsDirty() {
   statsCache.dirty = true;
+}
+
+function resetHotStatsCache() {
+  statsCache.hot = null;
+  statsCache.hotTick = -1;
 }
 
 function getSimulationSettings() {
@@ -231,9 +244,12 @@ function spreadStressVisibility(queue, x, y, visibility) {
 function seedWorld() {
   markPackedTerrainDirty();
   markStatsDirty();
+  resetHotStatsCache();
   dirtAccumulator = 0;
   state.cells.fill(EMPTY);
+  resetCellCounts();
   state.ages.fill(0);
+  state.looseContactAges.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
@@ -297,19 +313,49 @@ function render(delta = 0) {
   const worldCellW = cellW * CELLS_PER_WORLD_UNIT;
   const worldCellH = cellH * CELLS_PER_WORLD_UNIT;
   const dirtTween = dirtTweenProgress();
+  const visibleBounds = camera.visibleCellBounds(2);
 
   const packedContours = packedContourCache.getRenderContours();
   rebuildStressVisibilityIfDirty();
   ctx.save();
   camera.applyTransform(ctx);
-  dirtRenderer.drawPackedContourFill(packedContours, cellW, cellH);
-  dirtRenderer.drawCells({ cellW, cellH, dirtTween });
+  dirtRenderer.drawPackedContourFill(packedContours, cellW, cellH, visibleBounds);
+  dirtRenderer.drawCells({ cellW, cellH, dirtTween, visibleBounds });
   dirtRenderer.drawPackedContourOverlay(packedContours, cellW, cellH);
   drawActiveVehicle(worldCellW, worldCellH);
-  if (controls.debugView.checked) drawPlanckDebugView(ctx, physicsWorld, { cellW: worldCellW, cellH: worldCellH });
+  if (controls.debugView.checked) {
+    drawPlanckDebugView(ctx, physicsWorld, { cellW: worldCellW, cellH: worldCellH });
+    drawActivityTileDebug(cellW, cellH, visibleBounds);
+  }
   dirtRenderer.drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH);
   ctx.restore();
   dirtRenderer.updateStats();
+}
+
+function drawActivityTileDebug(cellW, cellH, visibleBounds) {
+  const tiles = activityGrid.getTiles();
+  const minTx = Math.max(0, Math.floor(visibleBounds.minX / tiles.tileSize));
+  const maxTx = Math.min(tiles.columns - 1, Math.floor(visibleBounds.maxX / tiles.tileSize));
+  const minTy = Math.max(0, Math.floor(visibleBounds.minY / tiles.tileSize));
+  const maxTy = Math.min(tiles.rows - 1, Math.floor(visibleBounds.maxY / tiles.tileSize));
+
+  ctx.save();
+  ctx.lineWidth = Math.max(1, Math.min(cellW, cellH) * 0.25);
+  for (let ty = minTy; ty <= maxTy; ty++) {
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      const tileIndex = ty * tiles.columns + tx;
+      const x = tx * tiles.tileSize;
+      const y = ty * tiles.tileSize;
+      const width = Math.min(tiles.tileSize, state.width - x);
+      const height = Math.min(tiles.tileSize, state.height - y);
+      const active = tiles.activeUntil[tileIndex] >= state.tick;
+      ctx.fillStyle = active ? "rgba(51, 187, 144, 0.12)" : "rgba(255, 255, 255, 0.025)";
+      ctx.strokeStyle = active ? "rgba(62, 230, 172, 0.55)" : "rgba(255, 255, 255, 0.10)";
+      ctx.fillRect(x * cellW, y * cellH, width * cellW, height * cellH);
+      ctx.strokeRect(x * cellW + 0.5, y * cellH + 0.5, width * cellW - 1, height * cellH - 1);
+    }
+  }
+  ctx.restore();
 }
 
 function getActiveVehicleCameraTarget() {
@@ -612,7 +658,9 @@ seedButton.addEventListener("click", () => {
 
 clearButton.addEventListener("click", () => {
   state.cells.fill(EMPTY);
+  resetCellCounts();
   state.ages.fill(0);
+  state.looseContactAges.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
@@ -630,8 +678,10 @@ clearButton.addEventListener("click", () => {
   state.tick = 0;
   dirtAccumulator = 0;
   packedContourCache.clear();
+  activityGrid.wakeAll();
   markPackedTerrainDirty();
   markStatsDirty();
+  resetHotStatsCache();
   resetActiveVehicle();
 });
 

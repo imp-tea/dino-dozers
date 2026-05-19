@@ -12,21 +12,22 @@ import {
 } from "./paperDirtStyle.js";
 
 const STRESS_VISUAL_EASE = 0.055;
+const HOT_STATS_INTERVAL_TICKS = 15;
 
 export function createDirtRenderer({ state, grid, controls, ctx, statsElement, statsCache }) {
   const { index } = grid;
   const paperStyle = createPaperDirtStyle(ctx);
   let visualStressActive = false;
 
-  function drawCells({ cellW, cellH, dirtTween }) {
+  function drawCells({ cellW, cellH, dirtTween, visibleBounds = fullBounds() }) {
     const showStress = controls.stressView.checked;
     const showDamage = controls.damageView.checked;
     const showPackedContours = controls.contourView.checked;
     const threshold = controls.cohesion.value;
-    updateVisualStress(showStress);
+    updateVisualStress(showStress, visibleBounds);
 
-    for (let y = 0; y < state.height; y++) {
-      for (let x = 0; x < state.width; x++) {
+    for (let y = visibleBounds.minY; y <= visibleBounds.maxY; y++) {
+      for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x++) {
         const i = index(x, y);
         const cell = state.cells[i];
         if (cell === EMPTY) continue;
@@ -59,7 +60,7 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     }
   }
 
-  function drawPackedContourFill(contours, cellW, cellH) {
+  function drawPackedContourFill(contours, cellW, cellH, visibleBounds = fullBounds()) {
     if (!controls.contourView.checked) return;
 
     const showStress = controls.stressView.checked;
@@ -67,7 +68,7 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     const threshold = controls.cohesion.value;
     const outerContours = Array.isArray(contours) ? contours : contours.outer;
     const holeContours = Array.isArray(contours) ? [] : contours.holes;
-    updateVisualStress(showStress);
+    updateVisualStress(showStress, visibleBounds);
 
     ctx.save();
     for (const contour of outerContours) {
@@ -93,8 +94,8 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
 
     if (!showDamage && !showStress) return;
 
-    for (let y = 0; y < state.height; y++) {
-      for (let x = 0; x < state.width; x++) {
+    for (let y = visibleBounds.minY; y <= visibleBounds.maxY; y++) {
+      for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x++) {
         const i = index(x, y);
         if (state.cells[i] !== PACKED) continue;
         if (showStress && state.stressVisibility[i] <= 0) continue;
@@ -130,23 +131,29 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     const threshold = controls.cohesion.value;
     if (!statsCache.dirty && statsCache.tick === state.tick && statsCache.threshold === threshold) return;
 
-    let loose = 0;
-    let packed = 0;
-    let hot = 0;
-    for (let i = 0; i < state.cells.length; i++) {
-      if (state.cells[i] === LOOSE) loose++;
-      if (state.cells[i] === PACKED) {
-        packed++;
-        if (state.stress[i] > threshold) hot++;
+    const shouldRefreshHot =
+      statsCache.hot == null ||
+      statsCache.threshold !== threshold ||
+      statsCache.hotTick == null ||
+      state.tick < statsCache.hotTick ||
+      state.tick - statsCache.hotTick >= HOT_STATS_INTERVAL_TICKS;
+
+    if (shouldRefreshHot) {
+      let hot = 0;
+      for (let i = 0; i < state.cells.length; i++) {
+        if (state.cells[i] === PACKED && state.stress[i] > threshold) hot++;
       }
+      statsCache.hot = hot;
+      statsCache.hotTick = state.tick;
     }
-    statsElement.textContent = `${packed} packed / ${loose} loose / ${hot} failing / tick ${state.tick}`;
+
+    statsElement.textContent = `${state.packedCount} packed / ${state.looseCount} loose / ${statsCache.hot ?? 0} failing / tick ${state.tick}`;
     statsCache.dirty = false;
     statsCache.tick = state.tick;
     statsCache.threshold = threshold;
   }
 
-  function updateVisualStress(showStress) {
+  function updateVisualStress(showStress, visibleBounds = fullBounds()) {
     if (!showStress) {
       if (!visualStressActive) return;
       state.visualStress.fill(0);
@@ -155,16 +162,18 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     }
 
     visualStressActive = true;
-    const total = state.width * state.height;
-    for (let i = 0; i < total; i++) {
-      if (state.cells[i] !== PACKED) {
-        state.visualStress[i] = 0;
-        continue;
-      }
+    for (let y = visibleBounds.minY; y <= visibleBounds.maxY; y++) {
+      for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x++) {
+        const i = index(x, y);
+        if (state.cells[i] !== PACKED) {
+          state.visualStress[i] = 0;
+          continue;
+        }
 
-      const target = state.stressVisibility[i] > 0 ? state.stress[i] * state.stressVisibility[i] : 0;
-      state.visualStress[i] += (target - state.visualStress[i]) * STRESS_VISUAL_EASE;
-      if (Math.abs(state.visualStress[i]) < 0.001) state.visualStress[i] = 0;
+        const target = state.stressVisibility[i] > 0 ? state.stress[i] * state.stressVisibility[i] : 0;
+        state.visualStress[i] += (target - state.visualStress[i]) * STRESS_VISUAL_EASE;
+        if (Math.abs(state.visualStress[i]) < 0.001) state.visualStress[i] = 0;
+      }
     }
   }
 
@@ -175,6 +184,15 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     drawBrushPreview,
     updateStats,
   };
+
+  function fullBounds() {
+    return {
+      minX: 0,
+      maxX: Math.max(0, state.width - 1),
+      minY: 0,
+      maxY: Math.max(0, state.height - 1),
+    };
+  }
 }
 
 function drawTinyCell(ctx, x, y, cellW, cellH, fillStyle) {

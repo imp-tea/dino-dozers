@@ -1,4 +1,4 @@
-import { EMPTY, PACKED } from "./cellTypes.js";
+import { EMPTY, LOOSE, PACKED } from "./cellTypes.js";
 
 const noop = () => {};
 
@@ -8,6 +8,7 @@ export function createGridState({ width, height }) {
     height,
     cells: null,
     ages: null,
+    looseContactAges: null,
     damage: null,
     stress: null,
     visualStress: null,
@@ -30,6 +31,8 @@ export function createGridState({ width, height }) {
     supportDistances: null,
     supportLoads: null,
     supportQueue: [],
+    looseCount: 0,
+    packedCount: 0,
     tool: "packed",
     brushShape: "circle",
     running: true,
@@ -43,6 +46,7 @@ export function createGrid(state, callbacks = {}) {
   const markCanvasLayoutDirty = callbacks.markCanvasLayoutDirty ?? noop;
   const markStatsDirty = callbacks.markStatsDirty ?? noop;
   const markPackedTerrainDirty = callbacks.markPackedTerrainDirty ?? noop;
+  const markCellActive = callbacks.markCellActive ?? noop;
   const onResize = callbacks.onResize ?? noop;
 
   function resizeGrid(width, height) {
@@ -51,6 +55,7 @@ export function createGrid(state, callbacks = {}) {
     const total = width * height;
     state.cells = new Uint8Array(total);
     state.ages = new Uint16Array(total);
+    state.looseContactAges = new Uint16Array(total);
     state.damage = new Float32Array(total);
     state.stress = new Float32Array(total);
     state.visualStress = new Float32Array(total);
@@ -70,6 +75,7 @@ export function createGrid(state, callbacks = {}) {
     state.clusterSeenToken = 0;
     state.supportDistances = new Float32Array(total);
     state.supportLoads = new Float32Array(total);
+    resetCellCounts();
     state.tick = 0;
     markCanvasLayoutDirty();
     markStatsDirty();
@@ -102,10 +108,28 @@ export function createGrid(state, callbacks = {}) {
     return state.cells[i] !== EMPTY || state.rigid[i] !== 0;
   }
 
+  function resetCellCounts() {
+    state.looseCount = 0;
+    state.packedCount = 0;
+  }
+
+  function updateCellCounts(fromKind, toKind, shouldMarkStats = true) {
+    if (fromKind === toKind) return;
+    if (fromKind === LOOSE) state.looseCount--;
+    else if (fromKind === PACKED) state.packedCount--;
+
+    if (toKind === LOOSE) state.looseCount++;
+    else if (toKind === PACKED) state.packedCount++;
+
+    if (shouldMarkStats) markStatsDirty();
+  }
+
   function clearCell(i, shouldMarkStats = true) {
     const wasPacked = state.cells[i] === PACKED;
+    updateCellCounts(state.cells[i], EMPTY, shouldMarkStats);
     state.cells[i] = EMPTY;
     state.ages[i] = 0;
+    state.looseContactAges[i] = 0;
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;
@@ -114,14 +138,16 @@ export function createGrid(state, callbacks = {}) {
     state.vy[i] = 0;
     state.touched[i] = 0;
     resetCellVisualPosition(i);
-    if (shouldMarkStats) markStatsDirty();
+    markCellActive(i);
     if (wasPacked) markPackedTerrainDirty();
   }
 
   function setCell(i, kind) {
     const wasPacked = state.cells[i] === PACKED;
+    updateCellCounts(state.cells[i], kind);
     state.cells[i] = kind;
     state.ages[i] = 0;
+    state.looseContactAges[i] = 0;
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;
@@ -130,7 +156,7 @@ export function createGrid(state, callbacks = {}) {
     state.vy[i] = 0;
     state.touched[i] = 0;
     resetCellVisualPosition(i);
-    markStatsDirty();
+    markCellActive(i);
     if (wasPacked || kind === PACKED) markPackedTerrainDirty();
   }
 
@@ -140,9 +166,11 @@ export function createGrid(state, callbacks = {}) {
     inBounds,
     setCell,
     clearCell,
+    resetCellCounts,
     resetCellVisualPosition,
     settleDirtVisualPositions,
     isEmptyForDirt,
     isSolidForDirt,
+    updateCellCounts,
   };
 }

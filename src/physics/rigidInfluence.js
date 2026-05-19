@@ -11,6 +11,8 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
   } = grid;
   const bodyGroups = new Map();
   let rigidVelocityMass = new Float32Array(0);
+  let rigidTouchedFlags = new Uint8Array(0);
+  const rigidTouchedCells = [];
 
   function clearBodyGroups() {
     bodyGroups.clear();
@@ -43,15 +45,13 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function update() {
     const total = state.width * state.height;
-    if (rigidVelocityMass.length !== total) rigidVelocityMass = new Float32Array(total);
+    if (rigidVelocityMass.length !== total) {
+      rigidVelocityMass = new Float32Array(total);
+      rigidTouchedFlags = new Uint8Array(total);
+      rigidTouchedCells.length = 0;
+    }
 
-    state.rigid.fill(0);
-    state.rigidVx.fill(0);
-    state.rigidVy.fill(0);
-    state.rigidMass.fill(0);
-    state.rigidImpactMass.fill(0);
-    state.externalLoad.fill(0);
-    rigidVelocityMass.fill(0);
+    clearTouchedRigidCells();
 
     for (const group of bodyGroups.values()) {
       if (!group.affectsTerrain) continue;
@@ -62,7 +62,27 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
       if (group.distributeLoadToContacts) distributeGroupLoadToContactCells(group);
     }
 
-    applyTerrainEffects();
+    applyTerrainEffects(markRigidTouchedCell);
+  }
+
+  function clearTouchedRigidCells() {
+    for (const i of rigidTouchedCells) {
+      state.rigid[i] = 0;
+      state.rigidVx[i] = 0;
+      state.rigidVy[i] = 0;
+      state.rigidMass[i] = 0;
+      state.rigidImpactMass[i] = 0;
+      state.externalLoad[i] = 0;
+      rigidVelocityMass[i] = 0;
+      rigidTouchedFlags[i] = 0;
+    }
+    rigidTouchedCells.length = 0;
+  }
+
+  function markRigidTouchedCell(i) {
+    if (i < 0 || i >= rigidTouchedFlags.length || rigidTouchedFlags[i]) return;
+    rigidTouchedFlags[i] = 1;
+    rigidTouchedCells.push(i);
   }
 
   function distributeGroupLoadToContactCells(group) {
@@ -86,7 +106,10 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     for (const { body, cells } of contactCellsByBody) {
       const contactLoadScale = getBodyTerrainContactLoadScale(body);
       const massPerCell = (massPerBody * contactLoadScale) / cells.length;
-      for (const i of cells) state.rigidMass[i] += massPerCell;
+      for (const i of cells) {
+        markRigidTouchedCell(i);
+        state.rigidMass[i] += massPerCell;
+      }
     }
   }
 
@@ -354,6 +377,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function markRigidCell(x, y, body, cellMass, terrainCellMass, impactCellMass) {
     const i = index(x, y);
+    markRigidTouchedCell(i);
     const velocity = body.getLinearVelocityFromWorldPoint(cellToWorldPoint(x + 0.5, y + 0.5));
     const previousVelocityMass = rigidVelocityMass[i];
     const nextVelocityMass = previousVelocityMass + cellMass;

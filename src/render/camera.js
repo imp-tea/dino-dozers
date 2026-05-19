@@ -94,6 +94,17 @@ export function createCamera({ canvas, layout, state }) {
     };
   }
 
+  function visibleCellBounds(padding = 1) {
+    const halfCellsX = canvas.width / Math.max(1, layout.cellW * camera.zoom) * 0.5;
+    const halfCellsY = canvas.height / Math.max(1, layout.cellH * camera.zoom) * 0.5;
+    return {
+      minX: clamp(Math.floor(camera.centerX - halfCellsX) - padding, 0, Math.max(0, state.width - 1)),
+      maxX: clamp(Math.ceil(camera.centerX + halfCellsX) + padding, 0, Math.max(0, state.width - 1)),
+      minY: clamp(Math.floor(camera.centerY - halfCellsY) - padding, 0, Math.max(0, state.height - 1)),
+      maxY: clamp(Math.ceil(camera.centerY + halfCellsY) + padding, 0, Math.max(0, state.height - 1)),
+    };
+  }
+
   function currentZoom() {
     return camera.zoom;
   }
@@ -141,6 +152,7 @@ export function createCamera({ canvas, layout, state }) {
     follow,
     panByCssDelta,
     update,
+    visibleCellBounds,
     zoomAtEvent,
   };
 }

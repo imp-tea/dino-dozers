@@ -30,6 +30,8 @@ const SUPPORT_RELIEF_OFFSETS = [
   [-1, 0, 0.35],
   [1, 0, 0.35],
 ];
+const PACKED_STRESS_SCALE = 4;
+const LOOSE_PACK_CONTACT_TICKS = 20;
 
 const DEFAULT_SETTINGS = {
   cohesion: 80,
@@ -47,6 +49,7 @@ export function createDirtSimulation({
   grid,
   getSettings = () => DEFAULT_SETTINGS,
   getActiveRegion = null,
+  activityGrid = null,
   updateRigidInfluenceGrid = () => {},
 }) {
   const {
@@ -56,7 +59,9 @@ export function createDirtSimulation({
     clearCell,
     isEmptyForDirt,
     isSolidForDirt,
+    updateCellCounts,
   } = grid;
+  const packedStress = createPackedStressModel();
 
   function getSettingsSnapshot() {
     const settings = {
@@ -69,20 +74,13 @@ export function createDirtSimulation({
     };
   }
 
-  let activeRegionForRigidEffects = null;
-
   function simulationStep() {
     const settings = getSettingsSnapshot();
-    const activeRegion = getActiveRegionSnapshot();
     state.tick++;
-    activeRegionForRigidEffects = activeRegion;
-    try {
-      updateRigidInfluenceGrid();
-    } finally {
-      activeRegionForRigidEffects = null;
-    }
-    updateLoose(settings, activeRegion);
-    analyzePackedClusters(settings, activeRegion);
+    activityGrid?.wakeRegion(getActiveRegionSnapshot());
+    updateRigidInfluenceGrid();
+    updateLoose(settings);
+    analyzePackedClusters(settings);
   }
 
   function getActiveRegionSnapshot() {
@@ -107,41 +105,56 @@ export function createDirtSimulation({
     };
   }
 
-  function isInActiveRegion(x, y, activeRegion) {
-    return x >= activeRegion.minX &&
-      x <= activeRegion.maxX &&
-      y >= activeRegion.minY &&
-      y <= activeRegion.maxY;
+  function isCellActive(x, y) {
+    return !activityGrid || activityGrid.isCellActive(x, y);
   }
 
-  function applyRigidTerrainEffects(activeRegion = activeRegionForRigidEffects ?? getActiveRegionSnapshot()) {
-    for (let y = activeRegion.minY; y <= activeRegion.maxY; y++) {
-      for (let x = activeRegion.minX; x <= activeRegion.maxX; x++) {
-        const i = index(x, y);
-        if (!state.rigid[i]) continue;
-
-        const speed = Math.hypot(state.rigidVx[i], state.rigidVy[i]);
-        const load = state.rigidMass[i] * RIGID_LOAD_SCALE;
-
-        if (y < activeRegion.maxY) {
-          const below = index(x, y + 1);
-          if (state.cells[below] === PACKED) state.externalLoad[below] += load;
-        }
-
-        if (state.rigidImpactMass[i] <= 0) continue;
-        if (speed < RIGID_BREAK_SPEED) continue;
-        const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidImpactMass[i]);
-        fracturePackedNearRigid(x, y, impact, state.rigidVx[i], state.rigidVy[i], activeRegion);
-      }
+  function forEachActiveBounds(visit) {
+    if (!activityGrid) {
+      visit({
+        minX: 0,
+        maxX: state.width - 1,
+        minY: 0,
+        maxY: state.height - 1,
+      });
+      return;
     }
+    activityGrid.forEachActiveTileBounds(visit);
   }
 
-  function fracturePackedNearRigid(x, y, impact, vx, vy, activeRegion) {
+  function applyRigidTerrainEffects(markRigidTouchedCell = () => {}) {
+    forEachActiveBounds((bounds) => {
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          const i = index(x, y);
+          if (!state.rigid[i]) continue;
+
+          const speed = Math.hypot(state.rigidVx[i], state.rigidVy[i]);
+          const load = state.rigidMass[i] * RIGID_LOAD_SCALE;
+
+          if (y < state.height - 1) {
+            const below = index(x, y + 1);
+            if (state.cells[below] === PACKED) {
+              markRigidTouchedCell(below);
+              state.externalLoad[below] += load;
+            }
+          }
+
+          if (state.rigidImpactMass[i] <= 0) continue;
+          if (speed < RIGID_BREAK_SPEED) continue;
+          const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidImpactMass[i]);
+          fracturePackedNearRigid(x, y, impact, state.rigidVx[i], state.rigidVy[i]);
+        }
+      }
+    });
+  }
+
+  function fracturePackedNearRigid(x, y, impact, vx, vy) {
     for (const [dx, dy] of RIGID_FRACTURE_OFFSETS) {
       const nx = x + dx;
       const ny = y + dy;
       if (!inBounds(nx, ny)) continue;
-      if (!isInActiveRegion(nx, ny, activeRegion)) continue;
+      if (!isCellActive(nx, ny)) continue;
       const i = index(nx, ny);
       if (state.cells[i] !== PACKED) continue;
 
@@ -155,29 +168,31 @@ export function createDirtSimulation({
     }
   }
 
-  function updateLoose(settings, activeRegion = getActiveRegionSnapshot()) {
+  function updateLoose(settings) {
     state.rngFlip = !state.rngFlip;
 
-    for (let y = activeRegion.maxY; y >= activeRegion.minY; y--) {
-      const leftToRight = (y + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0;
-      const width = activeRegion.maxX - activeRegion.minX + 1;
-      for (let n = 0; n < width; n++) {
-        const x = leftToRight
-          ? activeRegion.minX + n
-          : activeRegion.maxX - n;
-        const i = index(x, y);
-        if (state.cells[i] !== LOOSE || state.touched[i] === state.tick) continue;
-        updateLooseCell(i, settings, activeRegion);
+    forEachActiveBounds((bounds) => {
+      for (let y = bounds.maxY; y >= bounds.minY; y--) {
+        const leftToRight = (y + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0;
+        const width = bounds.maxX - bounds.minX + 1;
+        for (let n = 0; n < width; n++) {
+          const x = leftToRight
+            ? bounds.minX + n
+            : bounds.maxX - n;
+          const i = index(x, y);
+          if (state.cells[i] !== LOOSE || state.touched[i] === state.tick) continue;
+          updateLooseCell(i, settings);
+        }
       }
-    }
+    });
   }
 
-  function updateLooseCell(start, settings, activeRegion) {
+  function updateLooseCell(start, settings) {
     if (state.cells[start] !== LOOSE) return;
     state.touched[start] = state.tick;
-    if (state.rigid[start] && pushLooseOutOfRigid(start, activeRegion) !== start) return;
+    if (state.rigid[start] && pushLooseOutOfRigid(start) !== start) return;
 
-    const moved = tryFallingSandMove(start, settings, activeRegion);
+    const moved = tryFallingSandMove(start, settings);
     const current = moved >= 0 ? moved : start;
     if (current < 0 || state.cells[current] !== LOOSE) return;
 
@@ -188,6 +203,11 @@ export function createDirtSimulation({
 
     state.vx[current] = 0;
     state.vy[current] = 0;
+    if (updateLoosePackContact(current)) {
+      setCell(current, PACKED);
+      return;
+    }
+
     if (!hasSupport(current)) return;
 
     state.ages[current]++;
@@ -196,34 +216,34 @@ export function createDirtSimulation({
     }
   }
 
-  function tryFallingSandMove(i, settings, activeRegion) {
+  function tryFallingSandMove(i, settings) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
     if (y >= state.height - 1) return i;
 
-    const below = tryMoveLooseTo(i, x, y + 1, activeRegion);
+    const below = tryMoveLooseTo(i, x, y + 1);
     if (below >= 0) return below;
 
     const directionFirst = (x + y + state.tick + (state.rngFlip ? 1 : 0)) % 2 === 0 ? -1 : 1;
-    const diagonalA = tryMoveLooseTo(i, x + directionFirst, y + 1, activeRegion);
+    const diagonalA = tryMoveLooseTo(i, x + directionFirst, y + 1);
     if (diagonalA >= 0) return diagonalA;
 
-    const diagonalB = tryMoveLooseTo(i, x - directionFirst, y + 1, activeRegion);
+    const diagonalB = tryMoveLooseTo(i, x - directionFirst, y + 1);
     if (diagonalB >= 0) return diagonalB;
 
     if (Math.random() < settings.spread * 0.2 + settings.jitter * 0.08) {
-      const sideA = tryMoveLooseTo(i, x + directionFirst, y, activeRegion);
+      const sideA = tryMoveLooseTo(i, x + directionFirst, y);
       if (sideA >= 0) return sideA;
-      const sideB = tryMoveLooseTo(i, x - directionFirst, y, activeRegion);
+      const sideB = tryMoveLooseTo(i, x - directionFirst, y);
       if (sideB >= 0) return sideB;
     }
 
     return i;
   }
 
-  function tryMoveLooseTo(from, x, y, activeRegion) {
+  function tryMoveLooseTo(from, x, y) {
     if (!inBounds(x, y)) return -1;
-    if (!isInActiveRegion(x, y, activeRegion)) return -1;
+    if (!isCellActive(x, y)) return -1;
     const target = index(x, y);
     if (!isEmptyForDirt(target)) return -1;
     return moveLoose(from, target);
@@ -231,16 +251,20 @@ export function createDirtSimulation({
 
   function moveLoose(from, to) {
     if (from === to) return from;
+    updateCellCounts(state.cells[to], state.cells[from], false);
     state.cells[to] = state.cells[from];
     state.ages[to] = state.ages[from];
     state.damage[to] = state.damage[from];
     state.stress[to] = state.stress[from];
     state.visualStress[to] = state.visualStress[from];
+    state.looseContactAges[to] = state.looseContactAges[from];
     state.visualX[to] = state.visualX[from];
     state.visualY[to] = state.visualY[from];
     state.vx[to] = state.vx[from];
     state.vy[to] = state.vy[from];
     state.touched[to] = state.tick;
+    activityGrid?.wakeIndex(from);
+    activityGrid?.wakeIndex(to);
     clearCell(from, false);
     return to;
   }
@@ -249,7 +273,7 @@ export function createDirtSimulation({
     return Math.max(-8, Math.min(8, Math.trunc(value)));
   }
 
-  function pushLooseOutOfRigid(i, activeRegion) {
+  function pushLooseOutOfRigid(i) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
     const preferredY = state.rigidVy[i] > 0 ? -1 : 1;
@@ -264,7 +288,7 @@ export function createDirtSimulation({
 
     for (const [nx, ny] of candidates) {
       if (!inBounds(nx, ny)) continue;
-      if (!isInActiveRegion(nx, ny, activeRegion)) continue;
+      if (!isCellActive(nx, ny)) continue;
       const target = index(nx, ny);
       if (!isEmptyForDirt(target)) continue;
       const moved = moveLoose(i, target);
@@ -297,186 +321,29 @@ export function createDirtSimulation({
     return false;
   }
 
+  function hasCardinalPackedNeighbor(i) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    return (
+      (inBounds(x - 1, y) && state.cells[index(x - 1, y)] === PACKED) ||
+      (inBounds(x + 1, y) && state.cells[index(x + 1, y)] === PACKED) ||
+      (inBounds(x, y - 1) && state.cells[index(x, y - 1)] === PACKED) ||
+      (inBounds(x, y + 1) && state.cells[index(x, y + 1)] === PACKED)
+    );
+  }
+
+  function updateLoosePackContact(i) {
+    const touchingPacked = hasCardinalPackedNeighbor(i);
+    if (touchingPacked || state.looseContactAges[i] > 0) state.looseContactAges[i]++;
+    return touchingPacked && state.looseContactAges[i] >= LOOSE_PACK_CONTACT_TICKS;
+  }
+
   function canLooseCellPack(i) {
     return state.cells[i] === LOOSE && hasPackedNeighbor(i);
   }
 
-  function analyzePackedClusters(settings, activeRegion = getActiveRegionSnapshot()) {
-    clearActiveRegionStress(activeRegion);
-    const seen = state.clusterSeen;
-    const cluster = state.clusterCells;
-    const queue = state.clusterQueue;
-
-    state.clusterSeenToken = state.clusterSeenToken === 0xffffffff ? 1 : state.clusterSeenToken + 1;
-    if (state.clusterSeenToken === 1) seen.fill(0);
-    const seenToken = state.clusterSeenToken;
-
-    for (let y = activeRegion.minY; y <= activeRegion.maxY; y++) {
-      for (let x = activeRegion.minX; x <= activeRegion.maxX; x++) {
-        const i = index(x, y);
-        if (state.cells[i] !== PACKED || seen[i] === seenToken) continue;
-        cluster.length = 0;
-        queue.length = 0;
-        queue.push(i);
-        seen[i] = seenToken;
-
-        for (let q = 0; q < queue.length; q++) {
-          const current = queue[q];
-          cluster.push(current);
-          const cx = current % state.width;
-          const cy = Math.floor(current / state.width);
-          addPackedNeighbor(cx - 1, cy, seen, seenToken, queue, activeRegion);
-          addPackedNeighbor(cx + 1, cy, seen, seenToken, queue, activeRegion);
-          addPackedNeighbor(cx, cy - 1, seen, seenToken, queue, activeRegion);
-          addPackedNeighbor(cx, cy + 1, seen, seenToken, queue, activeRegion);
-        }
-
-        processCluster(cluster, settings, activeRegion);
-      }
-    }
-  }
-
-  function clearActiveRegionStress(activeRegion) {
-    for (let y = activeRegion.minY; y <= activeRegion.maxY; y++) {
-      for (let x = activeRegion.minX; x <= activeRegion.maxX; x++) {
-        state.stress[index(x, y)] = 0;
-      }
-    }
-  }
-
-  function addPackedNeighbor(x, y, seen, seenToken, queue, activeRegion) {
-    if (!inBounds(x, y)) return;
-    if (!isInActiveRegion(x, y, activeRegion)) return;
-    const i = index(x, y);
-    if (seen[i] === seenToken || state.cells[i] !== PACKED) return;
-    seen[i] = seenToken;
-    queue.push(i);
-  }
-
-  function hasRigidSupport(i) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    return y < state.height - 1 && state.rigid[index(x, y + 1)] !== 0;
-  }
-
-  function processCluster(cluster, settings, activeRegion) {
-    let grounded = false;
-
-    for (const i of cluster) {
-      if (hasClusterSupport(i, activeRegion)) {
-        grounded = true;
-        break;
-      }
-    }
-
-    if (!grounded) {
-      for (const i of cluster) setCell(i, LOOSE);
-      return;
-    }
-
-    const distances = computeSupportDistances(cluster, settings.bridgePenalty, activeRegion);
-    routeClusterLoad(cluster, distances, settings, activeRegion);
-  }
-
-  function hasClusterSupport(i, activeRegion) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    if (y === state.height - 1 || hasRigidSupport(i)) return true;
-
-    for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (!inBounds(nx, ny)) continue;
-      if (isInActiveRegion(nx, ny, activeRegion)) continue;
-      if (state.cells[index(nx, ny)] === PACKED) return true;
-    }
-
-    return false;
-  }
-
-  function computeSupportDistances(cluster, bridgePenalty, activeRegion) {
-    const distances = state.supportDistances;
-    const queue = state.supportQueue;
-    let head = 0;
-
-    queue.length = 0;
-    for (const i of cluster) distances[i] = Number.POSITIVE_INFINITY;
-
-    for (const i of cluster) {
-      if (hasClusterSupport(i, activeRegion)) {
-        distances[i] = 0;
-        queue.push(i);
-      }
-    }
-
-    while (head < queue.length) {
-      const current = queue[head++];
-      const x = current % state.width;
-      const y = Math.floor(current / state.width);
-      relaxSupportNeighbor(x - 1, y, current, distances, bridgePenalty, queue, activeRegion);
-      relaxSupportNeighbor(x + 1, y, current, distances, bridgePenalty, queue, activeRegion);
-      relaxSupportNeighbor(x, y - 1, current, distances, bridgePenalty, queue, activeRegion);
-      relaxSupportNeighbor(x, y + 1, current, distances, bridgePenalty, queue, activeRegion);
-    }
-
-    return distances;
-  }
-
-  function relaxSupportNeighbor(x, y, from, distances, bridgePenalty, queue, activeRegion) {
-    if (!inBounds(x, y)) return;
-    if (!isInActiveRegion(x, y, activeRegion)) return;
-    const next = index(x, y);
-    if (state.cells[next] !== PACKED) return;
-    const fx = from % state.width;
-    const fy = Math.floor(from / state.width);
-    const horizontal = y === fy && x !== fx;
-    const upward = y < fy;
-    const cost =
-      1 +
-      (horizontal ? bridgePenalty : 0) +
-      (upward ? 0.25 : 0);
-    const candidate = distances[from] + cost;
-    if (candidate >= distances[next]) return;
-    distances[next] = candidate;
-    queue.push(next);
-  }
-
-  function routeClusterLoad(cluster, distances, settings, activeRegion) {
-    const loads = state.supportLoads;
-    const particleWeight = settings.weight;
-    const threshold = settings.cohesion;
-    const fatigue = settings.fatigue;
-
-    for (const i of cluster) loads[i] = 0;
-    cluster.sort((a, b) => distances[b] - distances[a]);
-
-    for (const i of cluster) {
-      loads[i] += particleWeight + looseOverburden(i, particleWeight) + state.externalLoad[i];
-      const parent = bestSupportParent(i, distances, activeRegion);
-      const bending = bendingPenalty(i, distances);
-      const bearing = bearingPenalty(i);
-      state.stress[i] = isConfinedPackedCell(i)
-        ? 0
-        : (loads[i] * (1 + bending + bearing)) / supportRelief(i);
-
-      if (parent >= 0) {
-        loads[parent] += loads[i];
-      }
-    }
-
-    for (const i of cluster) {
-      const stress = state.stress[i];
-      if (stress > threshold) {
-        const excess = (stress - threshold) / Math.max(threshold, 1);
-        state.damage[i] += fatigue * excess;
-      } else {
-        state.damage[i] *= 0.82;
-      }
-
-      if (stress > threshold * 1.35 || state.damage[i] >= 1) {
-        setCell(i, LOOSE);
-      }
-    }
+  function analyzePackedClusters(settings) {
+    packedStress.analyze(settings);
   }
 
   function isConfinedPackedCell(i) {
@@ -498,6 +365,12 @@ export function createDirtSimulation({
     return true;
   }
 
+  function hasRigidSupport(i) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    return y < state.height - 1 && state.rigid[index(x, y + 1)] !== 0;
+  }
+
   function looseOverburden(i, particleWeight) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
@@ -510,73 +383,317 @@ export function createDirtSimulation({
     return load;
   }
 
-  function bestSupportParent(i, distances, activeRegion) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    let best = -1;
-    let bestDistance = distances[i];
+  function createPackedStressModel() {
+    let coarseWidth = 0;
+    let coarseHeight = 0;
+    let total = 0;
+    let packedCounts = new Uint16Array(0);
+    let occupied = new Uint8Array(0);
+    let supported = new Uint8Array(0);
+    let seen = new Uint32Array(0);
+    let stress = new Float32Array(0);
+    let loads = new Float32Array(0);
+    let distances = new Float32Array(0);
+    let externalLoads = new Float32Array(0);
+    let looseLoads = new Float32Array(0);
+    let unsupported = new Uint8Array(0);
+    let seenToken = 0;
+    const cluster = [];
+    const queue = [];
 
-    for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (!inBounds(nx, ny)) continue;
-      if (!isInActiveRegion(nx, ny, activeRegion)) continue;
-      const ni = index(nx, ny);
-      if (state.cells[ni] !== PACKED) continue;
-      if (distances[ni] < bestDistance) {
-        bestDistance = distances[ni];
-        best = ni;
+    function analyze(settings) {
+      resizeIfNeeded();
+      clearModel();
+      buildModel(settings.weight);
+      analyzeCoarseClusters(settings);
+      projectStress(settings);
+    }
+
+    function resizeIfNeeded() {
+      const nextWidth = Math.max(1, Math.ceil(state.width / PACKED_STRESS_SCALE));
+      const nextHeight = Math.max(1, Math.ceil(state.height / PACKED_STRESS_SCALE));
+      const nextTotal = nextWidth * nextHeight;
+      if (nextWidth === coarseWidth && nextHeight === coarseHeight && nextTotal === total) return;
+
+      coarseWidth = nextWidth;
+      coarseHeight = nextHeight;
+      total = nextTotal;
+      packedCounts = new Uint16Array(total);
+      occupied = new Uint8Array(total);
+      supported = new Uint8Array(total);
+      seen = new Uint32Array(total);
+      stress = new Float32Array(total);
+      loads = new Float32Array(total);
+      distances = new Float32Array(total);
+      externalLoads = new Float32Array(total);
+      looseLoads = new Float32Array(total);
+      unsupported = new Uint8Array(total);
+      seenToken = 0;
+    }
+
+    function clearModel() {
+      packedCounts.fill(0);
+      occupied.fill(0);
+      supported.fill(0);
+      stress.fill(0);
+      loads.fill(0);
+      externalLoads.fill(0);
+      looseLoads.fill(0);
+      unsupported.fill(0);
+    }
+
+    function buildModel(particleWeight) {
+      const fineTotal = state.width * state.height;
+      for (let i = 0; i < fineTotal; i++) {
+        if (state.cells[i] !== PACKED) continue;
+
+        const x = i % state.width;
+        const y = Math.floor(i / state.width);
+        const ci = coarseIndexForCell(x, y);
+        packedCounts[ci]++;
+        occupied[ci] = 1;
+        externalLoads[ci] += state.externalLoad[i];
+        looseLoads[ci] += looseOverburden(i, particleWeight);
+        if (y === state.height - 1 || hasRigidSupport(i)) supported[ci] = 1;
       }
     }
 
-    return best;
-  }
+    function analyzeCoarseClusters(settings) {
+      seenToken = seenToken === 0xffffffff ? 1 : seenToken + 1;
+      if (seenToken === 1) seen.fill(0);
 
-  function bendingPenalty(i, distances) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    const below = inBounds(x, y + 1) ? state.cells[index(x, y + 1)] : EMPTY;
-    const hasVerticalSupport = below === PACKED || hasRigidSupport(i) || y === state.height - 1;
-    if (hasVerticalSupport) return 0;
+      for (let i = 0; i < total; i++) {
+        if (!occupied[i] || seen[i] === seenToken) continue;
+        cluster.length = 0;
+        queue.length = 0;
+        queue.push(i);
+        seen[i] = seenToken;
 
-    const left = inBounds(x - 1, y) && state.cells[index(x - 1, y)] === PACKED;
-    const right = inBounds(x + 1, y) && state.cells[index(x + 1, y)] === PACKED;
-    const bridge = left && right ? 0.25 : 0.7;
-    return bridge + Math.min(distances[i] * 0.025, 1.4);
-  }
+        for (let q = 0; q < queue.length; q++) {
+          const current = queue[q];
+          cluster.push(current);
+          const x = current % coarseWidth;
+          const y = Math.floor(current / coarseWidth);
+          addCoarseNeighbor(x - 1, y);
+          addCoarseNeighbor(x + 1, y);
+          addCoarseNeighbor(x, y - 1);
+          addCoarseNeighbor(x, y + 1);
+        }
 
-  function bearingPenalty(i) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    let incoming = 0;
-
-    for (const [dx, dy] of BEARING_NEIGHBOR_OFFSETS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (!inBounds(nx, ny)) continue;
-      const ni = index(nx, ny);
-      if (state.cells[ni] === PACKED) incoming++;
-    }
-    return incoming >= 3 ? 0.25 : 0;
-  }
-
-  function supportRelief(i) {
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    if (y === state.height - 1) return 9;
-    if (hasRigidSupport(i)) return 5;
-
-    let relief = 1;
-
-    for (const [dx, dy, value] of SUPPORT_RELIEF_OFFSETS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (!inBounds(nx, ny)) continue;
-      const support = index(nx, ny);
-      if (state.cells[support] === PACKED || state.rigid[support]) relief += value;
+        processCoarseCluster(settings);
+      }
     }
 
-    return relief;
+    function addCoarseNeighbor(x, y) {
+      if (x < 0 || x >= coarseWidth || y < 0 || y >= coarseHeight) return;
+      const i = y * coarseWidth + x;
+      if (!occupied[i] || seen[i] === seenToken) return;
+      seen[i] = seenToken;
+      queue.push(i);
+    }
+
+    function processCoarseCluster(settings) {
+      let grounded = false;
+      for (const i of cluster) {
+        if (supported[i]) {
+          grounded = true;
+          break;
+        }
+      }
+
+      if (!grounded) {
+        for (const i of cluster) unsupported[i] = 1;
+        return;
+      }
+
+      computeCoarseSupportDistances(settings.bridgePenalty);
+      routeCoarseLoad(settings);
+    }
+
+    function computeCoarseSupportDistances(bridgePenalty) {
+      let head = 0;
+      queue.length = 0;
+
+      for (const i of cluster) {
+        distances[i] = Number.POSITIVE_INFINITY;
+        if (!supported[i]) continue;
+        distances[i] = 0;
+        queue.push(i);
+      }
+
+      while (head < queue.length) {
+        const current = queue[head++];
+        const x = current % coarseWidth;
+        const y = Math.floor(current / coarseWidth);
+        relaxCoarseSupportNeighbor(x - 1, y, current, bridgePenalty);
+        relaxCoarseSupportNeighbor(x + 1, y, current, bridgePenalty);
+        relaxCoarseSupportNeighbor(x, y - 1, current, bridgePenalty);
+        relaxCoarseSupportNeighbor(x, y + 1, current, bridgePenalty);
+      }
+    }
+
+    function relaxCoarseSupportNeighbor(x, y, from, bridgePenalty) {
+      if (x < 0 || x >= coarseWidth || y < 0 || y >= coarseHeight) return;
+      const next = y * coarseWidth + x;
+      if (!occupied[next]) return;
+      const fx = from % coarseWidth;
+      const fy = Math.floor(from / coarseWidth);
+      const horizontal = y === fy && x !== fx;
+      const upward = y < fy;
+      const cost =
+        1 +
+        (horizontal ? bridgePenalty : 0) +
+        (upward ? 0.25 : 0);
+      const candidate = distances[from] + cost;
+      if (candidate >= distances[next]) return;
+      distances[next] = candidate;
+      queue.push(next);
+    }
+
+    function routeCoarseLoad(settings) {
+      const particleWeight = settings.weight;
+
+      for (const i of cluster) loads[i] = 0;
+      cluster.sort((a, b) => distances[b] - distances[a]);
+
+      for (const i of cluster) {
+        loads[i] += packedCounts[i] * particleWeight + looseLoads[i] + externalLoads[i];
+        const parent = bestCoarseSupportParent(i);
+        const bending = coarseBendingPenalty(i);
+        const bearing = coarseBearingPenalty(i);
+        const averageLoad = loads[i] / Math.max(1, packedCounts[i]);
+        stress[i] = isCoarseConfined(i)
+          ? 0
+          : (averageLoad * (1 + bending + bearing)) / coarseSupportRelief(i);
+
+        if (parent >= 0) loads[parent] += loads[i];
+      }
+    }
+
+    function bestCoarseSupportParent(i) {
+      const x = i % coarseWidth;
+      const y = Math.floor(i / coarseWidth);
+      let best = -1;
+      let bestDistance = distances[i];
+
+      for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= coarseWidth || ny < 0 || ny >= coarseHeight) continue;
+        const ni = ny * coarseWidth + nx;
+        if (!occupied[ni]) continue;
+        if (distances[ni] < bestDistance) {
+          bestDistance = distances[ni];
+          best = ni;
+        }
+      }
+
+      return best;
+    }
+
+    function coarseBendingPenalty(i) {
+      const x = i % coarseWidth;
+      const y = Math.floor(i / coarseWidth);
+      const below = y < coarseHeight - 1 ? occupied[(y + 1) * coarseWidth + x] : 0;
+      const hasVerticalSupport = below || supported[i];
+      if (hasVerticalSupport) return 0;
+
+      const left = x > 0 && occupied[i - 1];
+      const right = x < coarseWidth - 1 && occupied[i + 1];
+      const bridge = left && right ? 0.25 : 0.7;
+      return bridge + Math.min(distances[i] * 0.025, 1.4);
+    }
+
+    function coarseBearingPenalty(i) {
+      const x = i % coarseWidth;
+      const y = Math.floor(i / coarseWidth);
+      let incoming = 0;
+
+      for (const [dx, dy] of BEARING_NEIGHBOR_OFFSETS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= coarseWidth || ny < 0 || ny >= coarseHeight) continue;
+        if (occupied[ny * coarseWidth + nx]) incoming++;
+      }
+      return incoming >= 3 ? 0.25 : 0;
+    }
+
+    function isCoarseConfined(i) {
+      const x = i % coarseWidth;
+      const y = Math.floor(i / coarseWidth);
+
+      for (const [dx, dy] of SUPPORT_PARENT_OFFSETS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= coarseWidth || ny < 0) return false;
+        if (ny >= coarseHeight) continue;
+        if (!occupied[ny * coarseWidth + nx]) return false;
+      }
+
+      return true;
+    }
+
+    function coarseSupportRelief(i) {
+      const x = i % coarseWidth;
+      const y = Math.floor(i / coarseWidth);
+      if (supported[i]) return 5 + 4 * coarseDensity(i);
+
+      let relief = 1;
+      for (const [dx, dy, value] of SUPPORT_RELIEF_OFFSETS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= coarseWidth || ny < 0 || ny >= coarseHeight) continue;
+        if (occupied[ny * coarseWidth + nx]) relief += value;
+      }
+
+      return relief;
+    }
+
+    function projectStress(settings) {
+      const threshold = settings.cohesion;
+      const fatigue = settings.fatigue;
+      const fineTotal = state.width * state.height;
+
+      for (let i = 0; i < fineTotal; i++) {
+        if (state.cells[i] !== PACKED) {
+          state.stress[i] = 0;
+          continue;
+        }
+
+        const x = i % state.width;
+        const y = Math.floor(i / state.width);
+        const ci = coarseIndexForCell(x, y);
+        if (unsupported[ci]) {
+          setCell(i, LOOSE);
+          continue;
+        }
+
+        const exposed = isConfinedPackedCell(i) ? 0.35 : 1;
+        const projectedStress = stress[ci] * exposed;
+        state.stress[i] = projectedStress;
+
+        if (projectedStress > threshold) {
+          const excess = (projectedStress - threshold) / Math.max(threshold, 1);
+          state.damage[i] += fatigue * excess;
+        } else {
+          state.damage[i] *= 0.82;
+        }
+
+        if (projectedStress > threshold * 1.35 || state.damage[i] >= 1) {
+          setCell(i, LOOSE);
+        }
+      }
+    }
+
+    function coarseDensity(i) {
+      return packedCounts[i] / (PACKED_STRESS_SCALE * PACKED_STRESS_SCALE);
+    }
+
+    function coarseIndexForCell(x, y) {
+      return Math.floor(y / PACKED_STRESS_SCALE) * coarseWidth + Math.floor(x / PACKED_STRESS_SCALE);
+    }
+
+    return { analyze };
   }
 
   return {
