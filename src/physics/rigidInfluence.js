@@ -2,15 +2,26 @@ import { Vec2 } from "planck";
 import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
 
 const ROLLER_MIN_LINEAR_SPEED = 0.08;
-const ROLLER_WINDOW_HALF_WIDTH = 6;
-const ROLLER_WINDOW_HALF_HEIGHT = 3;
-const ROLLER_MAX_MOVES_PER_STEP = 3;
+const ROLLER_WINDOW_HALF_WIDTH = 12;
+const ROLLER_WINDOW_HALF_HEIGHT = 2;
+const ROLLER_MAX_START_HORIZONTAL_DISTANCE = 3;
+const ROLLER_MAX_MOVES_PER_STEP = 1;
+const ROLLER_CHAIN_MAX_PATH_LENGTH = 16;
+const ROLLER_CHAIN_RESISTANCE = 0.16;
 const ROLLER_PRESSURE_WEIGHT = 1;
 const ROLLER_GRAVITY_WEIGHT = 1;
 const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
 const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
+const ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS = 3;
+const ROLLER_JAGGED_SURFACE_PENALTY = 0.7;
 const ROLLER_LOOSE_SETTLE_LOCK_TICKS = 18;
+const CARDINAL_OFFSETS = [
+  [0, -1],
+  [-1, 0],
+  [1, 0],
+  [0, 1],
+];
 
 export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, applyTerrainEffects = () => {} }) {
   const {
@@ -279,10 +290,16 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
     for (const cell of candidates) {
       const target = findRollerSettleTarget(cell, contact, flow);
-      if (target < 0) continue;
-      moveDirtCell(cell.i, target);
-      state.vx[target] = Math.sign(target % state.width - cell.x);
-      state.vy[target] = Math.sign(Math.floor(target / state.width) - cell.y);
+      if (target >= 0) {
+        moveDirtCell(cell.i, target);
+        state.vx[target] = Math.sign(target % state.width - cell.x);
+        state.vy[target] = Math.sign(Math.floor(target / state.width) - cell.y);
+        return true;
+      }
+
+      const chain = findRollerSettleChainPath(cell, contact, flow);
+      if (!chain) continue;
+      shiftRollerSettleChain(chain);
       return true;
     }
 
@@ -295,13 +312,25 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
     for (const cell of candidates) {
       const target = findRollerSettleTarget(cell, contact.point, flow);
-      if (target < 0) continue;
-      const tx = target % state.width;
-      const ty = Math.floor(target / state.width);
-      return {
-        candidate: `(${cell.x}, ${cell.y}) score=${cell.score.toFixed(3)}`,
-        target: `(${tx}, ${ty})`,
-      };
+      if (target >= 0) {
+        const tx = target % state.width;
+        const ty = Math.floor(target / state.width);
+        return {
+          candidate: `(${cell.x}, ${cell.y}) score=${cell.score.toFixed(3)}`,
+          target: `(${tx}, ${ty})`,
+        };
+      }
+
+      const chain = findRollerSettleChainPath(cell, contact.point, flow);
+      if (chain) {
+        const destination = chain[chain.length - 1];
+        const tx = destination % state.width;
+        const ty = Math.floor(destination / state.width);
+        return {
+          candidate: `(${cell.x}, ${cell.y}) score=${cell.score.toFixed(3)}`,
+          target: `chain length=${chain.length - 1} to (${tx}, ${ty})`,
+        };
+      }
     }
 
     return {
@@ -378,11 +407,12 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
           x: x + 0.5 - contact.x,
           y: y + 0.5 - contact.y,
         };
+        if (Math.abs(rel.x) > ROLLER_MAX_START_HORIZONTAL_DISTANCE) continue;
         candidates.push({
           i,
           x,
           y,
-          score: dot(rel, reverseFlow) * 2 + length(rel) * 0.25,
+          score: dot(rel, reverseFlow) * 2 - length(rel) * 0.25,
         });
       }
     }
@@ -418,7 +448,10 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
         if (outwardGain <= ROLLER_OUTWARD_EPSILON) continue;
         if (flowScore < -ROLLER_ANTI_FLOW_TOLERANCE) continue;
 
-        const score = flowScore + outwardGain * ROLLER_OUTWARD_WEIGHT;
+        const score =
+          flowScore +
+          outwardGain * ROLLER_OUTWARD_WEIGHT -
+          rollerJaggedSurfacePenaltyForPath([cell.i, target]);
         if (score > bestScore) {
           bestScore = score;
           best = target;
@@ -427,6 +460,179 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     }
 
     return best;
+  }
+
+  function findRollerSettleChainPath(cell, contact, flow) {
+    let bestPath = null;
+    let bestScore = -Infinity;
+    const startRel = {
+      x: cell.x + 0.5 - contact.x,
+      y: cell.y + 0.5 - contact.y,
+    };
+    const startDistance = length(startRel);
+    const bestScores = new Map([[cell.i, 0]]);
+    const search = [{
+      i: cell.i,
+      x: cell.x,
+      y: cell.y,
+      distance: startDistance,
+      score: 0,
+      path: [cell.i],
+    }];
+
+    while (search.length) {
+      const node = search.pop();
+      const depth = node.path.length - 1;
+      if (depth >= ROLLER_CHAIN_MAX_PATH_LENGTH) continue;
+
+      for (const next of collectRollerSettleMoves(node, contact, flow, startDistance)) {
+        if (node.path.includes(next.i)) continue;
+        const nextDepth = depth + 1;
+        const resistance = nextDepth > 1 ? ROLLER_CHAIN_RESISTANCE : 0;
+        const score = node.score + next.score - resistance;
+        const path = [...node.path, next.i];
+
+        if (state.cells[next.i] === EMPTY) {
+          if (nextDepth < 2) continue;
+          const finalScore = score - rollerJaggedSurfacePenaltyForPath(path);
+          if (finalScore > bestScore) {
+            bestScore = finalScore;
+            bestPath = path;
+          }
+          continue;
+        }
+
+        if (!isRollerMovableDirt(next.i)) continue;
+        const previousScore = bestScores.get(next.i);
+        if (previousScore != null && previousScore >= score) continue;
+        bestScores.set(next.i, score);
+        search.push({
+          i: next.i,
+          x: next.x,
+          y: next.y,
+          distance: next.distance,
+          score,
+          path,
+        });
+      }
+    }
+
+    return bestPath;
+  }
+
+  function collectRollerSettleMoves(node, contact, flow, startDistance) {
+    const moves = [];
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = node.x + dx;
+        const ny = node.y + dy;
+        if (!inBounds(nx, ny)) continue;
+
+        const move = normalize({ x: dx, y: dy });
+        const toRel = {
+          x: nx + 0.5 - contact.x,
+          y: ny + 0.5 - contact.y,
+        };
+        const distance = length(toRel);
+        const outwardGain = distance - node.distance;
+        const totalOutwardGain = distance - startDistance;
+        const flowScore = dot(move, flow);
+        if (outwardGain <= ROLLER_OUTWARD_EPSILON) continue;
+        if (totalOutwardGain <= ROLLER_OUTWARD_EPSILON) continue;
+        if (flowScore < -ROLLER_ANTI_FLOW_TOLERANCE) continue;
+
+        moves.push({
+          i: index(nx, ny),
+          x: nx,
+          y: ny,
+          distance,
+          score: flowScore + outwardGain * ROLLER_OUTWARD_WEIGHT,
+        });
+      }
+    }
+
+    moves.sort((a, b) => b.score - a.score);
+    return moves;
+  }
+
+  function rollerJaggedSurfacePenaltyForPath(path) {
+    const finalKinds = rollerFinalKindsForPath(path);
+    const checkCells = collectRollerJaggedCheckCells(path);
+    let jaggedCount = 0;
+
+    for (const i of checkCells) {
+      if (getRollerFinalKind(i, finalKinds) !== PACKED) continue;
+      if (countEmptyCardinalNeighbors(i, finalKinds) === ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS) jaggedCount++;
+    }
+
+    return jaggedCount * ROLLER_JAGGED_SURFACE_PENALTY;
+  }
+
+  function rollerFinalKindsForPath(path) {
+    const finalKinds = new Map([[path[0], EMPTY]]);
+    for (let p = 1; p < path.length; p++) {
+      const fromKind = state.cells[path[p - 1]];
+      finalKinds.set(path[p], fromKind === PACKED ? LOOSE : fromKind);
+    }
+    return finalKinds;
+  }
+
+  function collectRollerJaggedCheckCells(path) {
+    const seen = new Set();
+    const cells = [];
+
+    for (const i of path) {
+      addRollerJaggedCheckCell(i, seen, cells);
+      const x = i % state.width;
+      const y = Math.floor(i / state.width);
+      for (const [dx, dy] of CARDINAL_OFFSETS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        addRollerJaggedCheckCell(index(nx, ny), seen, cells);
+      }
+    }
+
+    return cells;
+  }
+
+  function addRollerJaggedCheckCell(i, seen, cells) {
+    if (seen.has(i)) return;
+    seen.add(i);
+    cells.push(i);
+  }
+
+  function countEmptyCardinalNeighbors(i, finalKinds) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    let emptyNeighbors = 0;
+
+    for (const [dx, dy] of CARDINAL_OFFSETS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (getRollerFinalKind(index(nx, ny), finalKinds) === EMPTY) emptyNeighbors++;
+    }
+
+    return emptyNeighbors;
+  }
+
+  function getRollerFinalKind(i, finalKinds) {
+    return finalKinds.get(i) ?? state.cells[i];
+  }
+
+  function shiftRollerSettleChain(path) {
+    for (let p = path.length - 2; p >= 0; p--) {
+      const from = path[p];
+      const to = path[p + 1];
+      const fromX = from % state.width;
+      const fromY = Math.floor(from / state.width);
+      moveDirtCell(from, to);
+      state.vx[to] = Math.sign(to % state.width - fromX);
+      state.vy[to] = Math.sign(Math.floor(to / state.width) - fromY);
+    }
   }
 
   function isRollerMovableDirt(i) {
