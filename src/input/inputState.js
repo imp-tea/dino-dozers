@@ -19,6 +19,7 @@ export function createInputState() {
       armY: 0,
       headTurn: 0,
       jawOpen: false,
+      flattenActive: false,
       lastAButton: false,
       lastYButton: false,
       active: false,

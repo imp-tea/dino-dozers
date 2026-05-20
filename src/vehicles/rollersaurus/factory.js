@@ -13,6 +13,11 @@ import {
   ROLLERSAURUS_DRIVE_SPEED,
   ROLLERSAURUS_FACING_LEFT,
   ROLLERSAURUS_FACING_RIGHT,
+  ROLLERSAURUS_FLATTEN_CONTACT_GRAVITY_SCALE,
+  ROLLERSAURUS_FLATTEN_DRIVE_SPEED,
+  ROLLERSAURUS_FLATTEN_MAX_LINEAR_SPEED,
+  ROLLERSAURUS_FLATTEN_SUSPENSION_DAMPING,
+  ROLLERSAURUS_FLATTEN_SUSPENSION_FREQUENCY,
   ROLLERSAURUS_FLIP_ANGULAR_IMPULSE,
   ROLLERSAURUS_FLIP_SIDE_IMPULSE,
   ROLLERSAURUS_FLIP_UPWARD_IMPULSE,
@@ -39,6 +44,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
   let activeVehicle = null;
   let sharedWheelSpeed = 0;
   let desiredDrive = 0;
+  let flattenModeActive = false;
 
   function create({ position, facing = ROLLERSAURUS_FACING_RIGHT, savedState = {} }) {
     activeVehicle = createRollersaurus(position, facing, savedState);
@@ -55,6 +61,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     activeVehicle = createRollersaurus(position, ROLLERSAURUS_FACING_RIGHT);
     sharedWheelSpeed = 0;
     desiredDrive = 0;
+    flattenModeActive = false;
   }
 
   function step(dt) {
@@ -146,6 +153,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
         terrainFlattenAngularSpeed: ROLLERSAURUS_ROLLER_FLATTEN_ANGULAR_SPEED,
         terrainFlattenDepth: ROLLERSAURUS_ROLLER_FLATTEN_DEPTH,
         terrainFlattenVelocityWeight: ROLLERSAURUS_ROLLER_FLATTEN_VELOCITY_WEIGHT,
+        terrainFlattenActive: false,
       }),
     ];
 
@@ -171,6 +179,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     terrainFlattenAngularSpeed = 0,
     terrainFlattenDepth = 0,
     terrainFlattenVelocityWeight = 0,
+    terrainFlattenActive = false,
   }) {
     const body = physicsWorld.createDynamicBody({
       position: chassis.getWorldPoint(local),
@@ -185,6 +194,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
       terrainFlattenAngularSpeed,
       terrainFlattenDepth,
       terrainFlattenVelocityWeight,
+      terrainFlattenActive,
       part,
     }));
     body.createFixture({
@@ -233,14 +243,18 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     if (!activeVehicle) return;
 
     pollJoypad();
+    flattenModeActive = isFlattenModeActive();
+    updateRollerFlattenMode(flattenModeActive);
     desiredDrive = getDriveInput();
-    const targetSpeed = desiredDrive * ROLLERSAURUS_DRIVE_SPEED;
+    const maxDriveSpeed = flattenModeActive ? ROLLERSAURUS_FLATTEN_DRIVE_SPEED : ROLLERSAURUS_DRIVE_SPEED;
+    const targetSpeed = desiredDrive * maxDriveSpeed;
     const driveSign = Math.sign(targetSpeed);
 
     if (driveSign === 0) {
       sharedWheelSpeed *= Math.pow(0.03, dt);
     } else {
       sharedWheelSpeed += (targetSpeed - sharedWheelSpeed) * Math.min(1, dt * 3.6);
+      sharedWheelSpeed = clamp(sharedWheelSpeed, -maxDriveSpeed, maxDriveSpeed);
       const signedSpeeds = activeVehicle.wheels.map((wheel) => wheel.body.getAngularVelocity() * driveSign);
       const slowest = Math.min(...signedSpeeds);
       const lockedLimit = Math.max(0, slowest + 2.5);
@@ -252,6 +266,52 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
       joint.setMotorSpeed(sharedWheelSpeed);
       joint.setMaxMotorTorque(ROLLERSAURUS_MOTOR_TORQUE);
     }
+
+    if (flattenModeActive) {
+      limitFlattenModeSpeed();
+      applyRollerContactBias();
+    }
+  }
+
+  function isFlattenModeActive() {
+    return activeKeys.has("Space") || joypad.flattenActive;
+  }
+
+  function updateRollerFlattenMode(active) {
+    for (const wheel of activeVehicle.wheels) {
+      const isRoller = wheel.subtype === "roller";
+      const userData = wheel.body.getUserData?.();
+      if (isRoller && userData) userData.terrainFlattenActive = active;
+      wheel.joint.setSpringFrequencyHz(
+        active && isRoller
+          ? ROLLERSAURUS_FLATTEN_SUSPENSION_FREQUENCY
+          : ROLLERSAURUS_SUSPENSION_FREQUENCY,
+      );
+      wheel.joint.setSpringDampingRatio(
+        active && isRoller
+          ? ROLLERSAURUS_FLATTEN_SUSPENSION_DAMPING
+          : ROLLERSAURUS_SUSPENSION_DAMPING,
+      );
+    }
+  }
+
+  function limitFlattenModeSpeed() {
+    for (const body of [activeVehicle.chassis, ...activeVehicle.wheels.map((wheel) => wheel.body)]) {
+      const velocity = body.getLinearVelocity();
+      if (Math.abs(velocity.x) <= ROLLERSAURUS_FLATTEN_MAX_LINEAR_SPEED) continue;
+      body.setLinearVelocity(Vec2(
+        Math.sign(velocity.x) * ROLLERSAURUS_FLATTEN_MAX_LINEAR_SPEED,
+        velocity.y,
+      ));
+    }
+  }
+
+  function applyRollerContactBias() {
+    const roller = activeVehicle.wheels.find((wheel) => wheel.subtype === "roller");
+    if (!roller) return;
+    const mass = roller.body.getMass?.() ?? 0;
+    if (mass <= 0) return;
+    roller.body.applyForceToCenter(Vec2(0, mass * 32 * ROLLERSAURUS_FLATTEN_CONTACT_GRAVITY_SCALE), true);
   }
 
   function getDriveInput() {
@@ -276,6 +336,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
       joypad.armX = 0;
       joypad.armY = 0;
       joypad.headTurn = 0;
+      joypad.flattenActive = false;
       joypad.active = false;
       joypad.lastAButton = false;
       joypad.lastYButton = false;
@@ -285,17 +346,19 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     joypad.connected = true;
     joypad.index = gamepad.index;
     const leftX = applyStickDeadzone(gamepad.axes[0] ?? 0);
+    const aPressed = isGamepadButtonPressed(gamepad.buttons[0]);
     const yPressed = isGamepadButtonPressed(gamepad.buttons[3]);
 
     if (yPressed && !joypad.lastYButton) flipRollersaurusFacing();
 
-    joypad.lastAButton = isGamepadButtonPressed(gamepad.buttons[0]);
+    joypad.lastAButton = aPressed;
     joypad.lastYButton = yPressed;
     joypad.drive = leftX;
     joypad.armX = 0;
     joypad.armY = 0;
     joypad.headTurn = 0;
-    joypad.active = Math.abs(leftX) > 0 || yPressed;
+    joypad.flattenActive = aPressed;
+    joypad.active = Math.abs(leftX) > 0 || aPressed || yPressed;
   }
 
   function applyStickDeadzone(value) {
@@ -339,6 +402,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     activeVehicle = createRollersaurus(Vec2(currentPosition.x, currentPosition.y), -previous.facing, nextState);
     sharedWheelSpeed = 0;
     desiredDrive = 0;
+    flattenModeActive = false;
     return true;
   }
 
@@ -404,6 +468,10 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
 
   function normalizeAngle(angle) {
     return Math.atan2(Math.sin(angle), Math.cos(angle));
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
   }
 
   function getActiveVehicleBodies() {

@@ -37,6 +37,7 @@ const VEHICLE_CONTROL_CODES = new Set([
   "KeyE",
   "KeyW",
   "KeyS",
+  "Space",
 ]);
 const CONTINUOUS_KEY_CODES = new Set([
   ...VEHICLE_CONTROL_CODES,
@@ -810,7 +811,7 @@ window.addEventListener("keydown", (event) => {
   } else if (event.code === "KeyP") {
     rigidInfluence.logRollerTerrainDebug(vehicleManager.getActiveVehicleBodies());
     event.preventDefault();
-  } else if (event.code === "Space") {
+  } else if (event.code === "Space" && activeVehicleType === VEHICLE_TYPES.WRECKERSAURUS) {
     followActiveVehicle();
     joypad.jawOpen = !joypad.jawOpen;
     event.preventDefault();
@@ -825,7 +826,8 @@ window.addEventListener("keyup", (event) => {
     event.code === "KeyA" ||
     event.code === "ArrowLeft" ||
     event.code === "KeyD" ||
-    event.code === "ArrowRight"
+    event.code === "ArrowRight" ||
+    event.code === "Space"
   ) {
     event.preventDefault();
   }
@@ -844,6 +846,7 @@ window.addEventListener("gamepaddisconnected", (event) => {
   joypad.armX = 0;
   joypad.armY = 0;
   joypad.headTurn = 0;
+  joypad.flattenActive = false;
   joypad.active = false;
 });
 

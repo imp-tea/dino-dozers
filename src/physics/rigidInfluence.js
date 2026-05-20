@@ -224,6 +224,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     return {
       angularSpeed,
       depth: Math.max(1, Math.trunc(depth * cellsPerWorldUnit)),
+      active: userData?.terrainFlattenActive === true,
       velocityWeight: Math.max(0, userData?.terrainFlattenVelocityWeight ?? 0),
     };
   }
@@ -241,6 +242,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
   }
 
   function isRollerSettleActive(body, config) {
+    if (!config.active) return false;
     const velocity = body.getLinearVelocity?.() ?? Vec2(0, 0);
     if (Math.abs(velocity.x) < ROLLER_MIN_LINEAR_SPEED) return false;
     return Math.abs(body.getAngularVelocity?.() ?? 0) >= config.angularSpeed;
@@ -379,7 +381,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
           i,
           x,
           y,
-          score: dot(rel, reverseFlow) * 2 - length(rel) * 0.25,
+          score: dot(rel, reverseFlow) * 2 + length(rel) * 0.25,
         });
       }
     }
