@@ -120,8 +120,8 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     chassis.createFixture({
       shape: Polygon(mirrorSourceVertices([
         Vec2(-2.72, -0.5),
-        Vec2(-2.24, -0.82),
-        Vec2(2.36, -0.82),
+        Vec2(-2.24, -0.56),
+        Vec2(2.36, -0.56),
         Vec2(2.82, -0.5),
         Vec2(2.58, 0.58),
         Vec2(-2.52, 0.64),

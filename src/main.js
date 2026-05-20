@@ -98,12 +98,14 @@ const camera = createCamera({
   state,
 });
 const activityGrid = createActivityGrid({ state });
+let markStressCellChanged = () => {};
 
 const grid = createGrid(state, {
   markCanvasLayoutDirty,
   markStatsDirty,
   markPackedTerrainDirty,
   markCellActive: (i) => activityGrid.wakeIndex(i),
+  onCellKindChanged: (i, fromKind, toKind) => markStressCellChanged(i, fromKind, toKind),
   onResize: () => {
     activityGrid.resize();
     seedWorld();
@@ -136,6 +138,7 @@ const dirtSimulation = createDirtSimulation({
   activityGrid,
   updateRigidInfluenceGrid,
 });
+markStressCellChanged = dirtSimulation.markStressCellChanged;
 const { simulationStep } = dirtSimulation;
 const packedContourCache = createPackedContourCache({ state, grid });
 const physicsTerrain = createPhysicsTerrain({
@@ -247,6 +250,7 @@ function seedWorld() {
   resetHotStatsCache();
   dirtAccumulator = 0;
   state.cells.fill(EMPTY);
+  dirtSimulation.resetStressModel();
   resetCellCounts();
   state.ages.fill(0);
   state.looseContactAges.fill(0);
@@ -625,8 +629,8 @@ function frame(now = performance.now()) {
   const delta = Math.min(100, now - lastFrame);
   lastFrame = now;
 
-  stepDirt(delta);
   stepPhysics(delta);
+  stepDirt(delta);
   if (isVehicleControlActive()) followActiveVehicle();
   render(delta);
   requestAnimationFrame(frame);
@@ -658,6 +662,7 @@ seedButton.addEventListener("click", () => {
 
 clearButton.addEventListener("click", () => {
   state.cells.fill(EMPTY);
+  dirtSimulation.resetStressModel();
   resetCellCounts();
   state.ages.fill(0);
   state.looseContactAges.fill(0);
@@ -801,6 +806,9 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   } else if (event.code === "KeyR") {
     resetActiveVehicle();
+    event.preventDefault();
+  } else if (event.code === "KeyP") {
+    rigidInfluence.logRollerTerrainDebug(vehicleManager.getActiveVehicleBodies());
     event.preventDefault();
   } else if (event.code === "Space") {
     followActiveVehicle();

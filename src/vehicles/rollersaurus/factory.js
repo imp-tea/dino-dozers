@@ -21,6 +21,7 @@ import {
   ROLLERSAURUS_ROLLER_DENSITY,
   ROLLERSAURUS_ROLLER_FLATTEN_ANGULAR_SPEED,
   ROLLERSAURUS_ROLLER_FLATTEN_DEPTH,
+  ROLLERSAURUS_ROLLER_FLATTEN_VELOCITY_WEIGHT,
   ROLLERSAURUS_ROLLER_FRICTION,
   ROLLERSAURUS_SUSPENSION_DAMPING,
   ROLLERSAURUS_SUSPENSION_FREQUENCY,
@@ -97,8 +98,8 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
         Vec2(-5.22, -4.02),
         Vec2(4.82, -4.36),
         Vec2(6.0, -2.36),
-        Vec2(5.64, 0.64),
-        Vec2(-5.92, 0.86),
+        Vec2(5.64, 0.36),
+        Vec2(-5.92, 0.5),
       ], direction).map(scaleBodyVertex)),
       density: ROLLERSAURUS_CHASSIS_DENSITY,
       friction: 0.78,
@@ -144,6 +145,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
         terrainContactLoadScale: 8.5,
         terrainFlattenAngularSpeed: ROLLERSAURUS_ROLLER_FLATTEN_ANGULAR_SPEED,
         terrainFlattenDepth: ROLLERSAURUS_ROLLER_FLATTEN_DEPTH,
+        terrainFlattenVelocityWeight: ROLLERSAURUS_ROLLER_FLATTEN_VELOCITY_WEIGHT,
       }),
     ];
 
@@ -166,6 +168,9 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     part,
     subtype = null,
     terrainContactLoadScale,
+    terrainFlattenAngularSpeed = 0,
+    terrainFlattenDepth = 0,
+    terrainFlattenVelocityWeight = 0,
   }) {
     const body = physicsWorld.createDynamicBody({
       position: chassis.getWorldPoint(local),
@@ -177,6 +182,9 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
       kind: "rollersaurus",
       subtype,
       terrainContactLoadScale,
+      terrainFlattenAngularSpeed,
+      terrainFlattenDepth,
+      terrainFlattenVelocityWeight,
       part,
     }));
     body.createFixture({

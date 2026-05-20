@@ -47,6 +47,7 @@ export function createGrid(state, callbacks = {}) {
   const markStatsDirty = callbacks.markStatsDirty ?? noop;
   const markPackedTerrainDirty = callbacks.markPackedTerrainDirty ?? noop;
   const markCellActive = callbacks.markCellActive ?? noop;
+  const onCellKindChanged = callbacks.onCellKindChanged ?? noop;
   const onResize = callbacks.onResize ?? noop;
 
   function resizeGrid(width, height) {
@@ -125,8 +126,9 @@ export function createGrid(state, callbacks = {}) {
   }
 
   function clearCell(i, shouldMarkStats = true) {
-    const wasPacked = state.cells[i] === PACKED;
-    updateCellCounts(state.cells[i], EMPTY, shouldMarkStats);
+    const fromKind = state.cells[i];
+    const wasPacked = fromKind === PACKED;
+    updateCellCounts(fromKind, EMPTY, shouldMarkStats);
     state.cells[i] = EMPTY;
     state.ages[i] = 0;
     state.looseContactAges[i] = 0;
@@ -139,12 +141,14 @@ export function createGrid(state, callbacks = {}) {
     state.touched[i] = 0;
     resetCellVisualPosition(i);
     markCellActive(i);
+    if (fromKind !== EMPTY) onCellKindChanged(i, fromKind, EMPTY);
     if (wasPacked) markPackedTerrainDirty();
   }
 
   function setCell(i, kind) {
-    const wasPacked = state.cells[i] === PACKED;
-    updateCellCounts(state.cells[i], kind);
+    const fromKind = state.cells[i];
+    const wasPacked = fromKind === PACKED;
+    updateCellCounts(fromKind, kind);
     state.cells[i] = kind;
     state.ages[i] = 0;
     state.looseContactAges[i] = 0;
@@ -157,6 +161,7 @@ export function createGrid(state, callbacks = {}) {
     state.touched[i] = 0;
     resetCellVisualPosition(i);
     markCellActive(i);
+    if (fromKind !== kind) onCellKindChanged(i, fromKind, kind);
     if (wasPacked || kind === PACKED) markPackedTerrainDirty();
   }
 

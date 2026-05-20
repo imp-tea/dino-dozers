@@ -1,5 +1,14 @@
 import { Vec2 } from "planck";
-import { PACKED } from "../sim/cellTypes.js";
+import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
+
+const ROLLER_MIN_LINEAR_SPEED = 0.08;
+const ROLLER_WINDOW_HALF_SIZE = 5;
+const ROLLER_MAX_MOVES_PER_STEP = 5;
+const ROLLER_PRESSURE_WEIGHT = 1;
+const ROLLER_GRAVITY_WEIGHT = 0.5;
+const ROLLER_OUTWARD_WEIGHT = 0.25;
+const ROLLER_OUTWARD_EPSILON = 0.001;
+const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
 
 export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, applyTerrainEffects = () => {} }) {
   const {
@@ -16,6 +25,60 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function clearBodyGroups() {
     bodyGroups.clear();
+  }
+
+  function logRollerTerrainDebug(bodies = []) {
+    const rollerBodies = bodies.filter((body) => getBodyTerrainFlattenConfig(body));
+    if (!rollerBodies.length) {
+      console.log("[roller-debug] no roller terrain bodies found");
+      return;
+    }
+
+    for (const body of rollerBodies) {
+      const config = getBodyTerrainFlattenConfig(body);
+      const contact = findRollerTerrainContact(body);
+      const userData = body.getUserData?.();
+      if (!contact) {
+        console.log("[roller-debug] no packed terrain contact", {
+          kind: userData?.kind,
+          subtype: userData?.subtype,
+          angularVelocity: body.getAngularVelocity?.(),
+          linearVelocity: body.getLinearVelocity?.(),
+        });
+        continue;
+      }
+
+      const bounds = rollerSettleBounds(contact.point, config.depth);
+      const velocity = body.getLinearVelocity?.() ?? Vec2(0, 0);
+      const angularVelocity = body.getAngularVelocity?.() ?? 0;
+      const active = isRollerSettleActive(body, config);
+      const flow = rollerSettleFlow(contact, body, config);
+      const decision = describeRollerSettleDecision(contact, bounds, flow);
+      const rows = [];
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        let row = "";
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          row += state.cells[index(x, y)] === PACKED ? "1" : "0";
+        }
+        rows.push(row);
+      }
+
+      console.log([
+        "[roller-debug] packed terrain contact window",
+        `body=${userData?.kind ?? "unknown"}:${userData?.subtype ?? userData?.part ?? "unknown"}`,
+        `contactCell=(${contact.point.x.toFixed(2)}, ${contact.point.y.toFixed(2)})`,
+        `normal=(${contact.normal.x.toFixed(2)}, ${contact.normal.y.toFixed(2)})`,
+        `separation=${contact.separation.toFixed(4)}`,
+        `velocity=(${velocity.x.toFixed(3)}, ${velocity.y.toFixed(3)}), angularVelocity=${angularVelocity.toFixed(3)}`,
+        `active=${active} (requires |vx| >= ${ROLLER_MIN_LINEAR_SPEED}, |angularVelocity| >= ${config.angularSpeed})`,
+        `flow=(${flow.x.toFixed(2)}, ${flow.y.toFixed(2)}), velocityWeight=${config.velocityWeight}`,
+        `bounds=x:${bounds.minX}-${bounds.maxX}, y:${bounds.minY}-${bounds.maxY}`,
+        `candidate=${decision.candidate}`,
+        `target=${decision.target}`,
+        "legend: 0 empty/non-packed, 1 packed",
+        ...rows,
+      ].join("\n"));
+    }
   }
 
   function registerBodyGroup({
@@ -160,78 +223,238 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     return {
       angularSpeed,
       depth: Math.max(1, Math.trunc(depth * cellsPerWorldUnit)),
+      velocityWeight: Math.max(0, userData?.terrainFlattenVelocityWeight ?? 0),
     };
   }
 
   function flattenPackedTerrainForBody(body) {
     const config = getBodyTerrainFlattenConfig(body);
-    if (!config || Math.abs(body.getAngularVelocity?.() ?? 0) < config.angularSpeed) return;
+    if (!config) return;
+    if (!isRollerSettleActive(body, config)) return;
 
     for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
       const shape = fixture.getShape();
       if (shape.m_radius == null) continue;
-      flattenPackedTerrainUnderCircle(body, shape, config.depth);
+      applyRollerSettleTerrain(body, shape, config);
     }
   }
 
-  function flattenPackedTerrainUnderCircle(body, shape, depth) {
-    const center = worldToCellPoint(shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition());
-    const radius = shape.m_radius * cellsPerWorldUnit;
-    const minX = Math.max(0, Math.floor(center.x - radius));
-    const maxX = Math.min(state.width - 1, Math.ceil(center.x + radius));
-    const minY = Math.max(0, Math.floor(center.y));
-    const maxY = Math.min(state.height - 1, Math.ceil(center.y + radius + depth));
-    const radiusSq = radius * radius;
-    const candidates = [];
+  function isRollerSettleActive(body, config) {
+    const velocity = body.getLinearVelocity?.() ?? Vec2(0, 0);
+    if (Math.abs(velocity.x) < ROLLER_MIN_LINEAR_SPEED) return false;
+    return Math.abs(body.getAngularVelocity?.() ?? 0) >= config.angularSpeed;
+  }
 
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const dx = x + 0.5 - center.x;
-        const dy = Math.max(0, y + 0.5 - center.y);
-        if (dx * dx + dy * dy > radiusSq + depth * depth) continue;
-        const i = index(x, y);
-        if (state.cells[i] === PACKED) candidates.push(i);
+  function applyRollerSettleTerrain(body, shape, config) {
+    const contact = findRollerTerrainContact(body);
+    if (!contact) return;
+
+    const bounds = rollerSettleBounds(contact.point, config.depth);
+    const flow = rollerSettleFlow(contact, body, config);
+
+    let moved = 0;
+    while (moved < ROLLER_MAX_MOVES_PER_STEP && moveBestRollerSettleCell(bounds, contact.point, flow)) moved++;
+  }
+
+  function rollerSettleFlow(contact, body, config) {
+    const pressure = normalize({
+      x: -contact.normal.x,
+      y: -contact.normal.y,
+    });
+    const velocity = body.getLinearVelocity?.() ?? Vec2(0, 0);
+    const travel = normalize({ x: velocity.x, y: 0 });
+    return normalize({
+      x: pressure.x * ROLLER_PRESSURE_WEIGHT + travel.x * config.velocityWeight,
+      y: pressure.y * ROLLER_PRESSURE_WEIGHT + ROLLER_GRAVITY_WEIGHT,
+    });
+  }
+
+  function moveBestRollerSettleCell(bounds, contact, flow) {
+    const candidates = collectRollerSettleCandidates(bounds, contact, flow);
+    candidates.sort((a, b) => b.score - a.score);
+
+    for (const cell of candidates) {
+      const target = findRollerSettleTarget(cell, contact, flow);
+      if (target < 0) continue;
+      moveDirtCell(cell.i, target);
+      state.vx[target] = Math.sign(target % state.width - cell.x);
+      state.vy[target] = Math.sign(Math.floor(target / state.width) - cell.y);
+      return true;
+    }
+
+    return false;
+  }
+
+  function describeRollerSettleDecision(contact, bounds, flow) {
+    const candidates = collectRollerSettleCandidates(bounds, contact.point, flow);
+    candidates.sort((a, b) => b.score - a.score);
+
+    for (const cell of candidates) {
+      const target = findRollerSettleTarget(cell, contact.point, flow);
+      if (target < 0) continue;
+      const tx = target % state.width;
+      const ty = Math.floor(target / state.width);
+      return {
+        candidate: `(${cell.x}, ${cell.y}) score=${cell.score.toFixed(3)}`,
+        target: `(${tx}, ${ty})`,
+      };
+    }
+
+    return {
+      candidate: candidates.length ? `none movable among ${candidates.length} candidates` : "none",
+      target: "none",
+    };
+  }
+
+  function findRollerTerrainContact(body) {
+    let best = null;
+
+    for (let edge = body.getContactList?.(); edge; edge = edge.next) {
+      const contact = edge.contact;
+      if (!contact?.isTouching?.()) continue;
+      const fixtureA = contact.getFixtureA?.();
+      const fixtureB = contact.getFixtureB?.();
+      const bodyA = fixtureA?.getBody?.();
+      const bodyB = fixtureB?.getBody?.();
+      const rollerIsA = bodyA === body;
+      const rollerIsB = bodyB === body;
+      if (!rollerIsA && !rollerIsB) continue;
+
+      const otherFixture = rollerIsA ? fixtureB : fixtureA;
+      if (!isTerrainFixture(otherFixture)) continue;
+
+      const manifold = contact.getWorldManifold?.(null);
+      if (!manifold?.pointCount) continue;
+
+      const normalSign = rollerIsA ? -1 : 1;
+      const normal = normalize({
+        x: manifold.normal.x * normalSign,
+        y: manifold.normal.y * normalSign,
+      });
+
+      for (let i = 0; i < manifold.pointCount; i++) {
+        const point = worldToCellPoint(manifold.points[i]);
+        const separation = manifold.separations?.[i] ?? 0;
+        if (best && separation >= best.separation) continue;
+        best = {
+          point,
+          normal,
+          separation,
+        };
       }
     }
 
-    candidates.sort((a, b) => b - a);
-    for (const i of candidates) movePackedCellDown(i, depth);
+    return best;
   }
 
-  function movePackedCellDown(i, depth) {
-    if (state.cells[i] !== PACKED) return false;
-    const x = i % state.width;
-    const y = Math.floor(i / state.width);
-    const target = findPackedFlattenTarget(x, y, depth);
-    if (target < 0 || target === i) return false;
-
-    const visualX = state.visualX[i];
-    const visualY = state.visualY[i];
-    setCell(target, PACKED);
-    state.visualX[target] = visualX;
-    state.visualY[target] = visualY;
-    clearCell(i, false);
-    state.touched[target] = state.tick;
-    return true;
+  function isTerrainFixture(fixture) {
+    const fixtureData = fixture?.getUserData?.();
+    const bodyData = fixture?.getBody?.()?.getUserData?.();
+    return fixtureData?.kind === "packed-terrain" || bodyData?.kind === "packed-terrain";
   }
 
-  function findPackedFlattenTarget(x, y, depth) {
-    for (let dy = Math.min(depth, state.height - 1 - y); dy >= 1; dy--) {
-      for (const dx of flattenDxOrder(dy)) {
-        const nx = x + dx;
-        const ny = y + dy;
+  function rollerSettleBounds(contact, depth) {
+    return {
+      minX: Math.max(0, Math.floor(contact.x) - ROLLER_WINDOW_HALF_SIZE),
+      maxX: Math.min(state.width - 1, Math.floor(contact.x) + ROLLER_WINDOW_HALF_SIZE),
+      minY: Math.max(0, Math.floor(contact.y) - ROLLER_WINDOW_HALF_SIZE),
+      maxY: Math.min(state.height - 1, Math.floor(contact.y) + ROLLER_WINDOW_HALF_SIZE),
+    };
+  }
+
+  function collectRollerSettleCandidates(bounds, contact, flow) {
+    const candidates = [];
+    const reverseFlow = { x: -flow.x, y: -flow.y };
+
+    for (let y = bounds.minY; y <= bounds.maxY; y++) {
+      for (let x = bounds.minX; x <= bounds.maxX; x++) {
+        const i = index(x, y);
+        if (!isRollerMovableDirt(i)) continue;
+        const rel = {
+          x: x + 0.5 - contact.x,
+          y: y + 0.5 - contact.y,
+        };
+        candidates.push({
+          i,
+          x,
+          y,
+          score: dot(rel, reverseFlow) * 2 - length(rel) * 0.25,
+        });
+      }
+    }
+
+    return candidates;
+  }
+
+  function findRollerSettleTarget(cell, contact, flow) {
+    let best = -1;
+    let bestScore = -Infinity;
+    const fromRel = {
+      x: cell.x + 0.5 - contact.x,
+      y: cell.y + 0.5 - contact.y,
+    };
+    const fromDistance = length(fromRel);
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cell.x + dx;
+        const ny = cell.y + dy;
         if (!inBounds(nx, ny)) continue;
         const target = index(nx, ny);
-        if (isEmptyForDirt(target)) return target;
+        if (state.cells[target] !== EMPTY) continue;
+
+        const move = normalize({ x: dx, y: dy });
+        const toRel = {
+          x: nx + 0.5 - contact.x,
+          y: ny + 0.5 - contact.y,
+        };
+        const outwardGain = length(toRel) - fromDistance;
+        const flowScore = dot(move, flow);
+        if (outwardGain <= ROLLER_OUTWARD_EPSILON) continue;
+        if (flowScore < -ROLLER_ANTI_FLOW_TOLERANCE) continue;
+
+        const score = flowScore + outwardGain * ROLLER_OUTWARD_WEIGHT;
+        if (score > bestScore) {
+          bestScore = score;
+          best = target;
+        }
       }
     }
-    return -1;
+
+    return best;
   }
 
-  function flattenDxOrder(depth) {
-    const order = [0];
-    for (let x = 1; x <= depth; x++) order.push(-x, x);
-    return order;
+  function isRollerMovableDirt(i) {
+    return state.cells[i] === PACKED || state.cells[i] === LOOSE;
+  }
+
+  function moveDirtCell(from, to) {
+    const kind = state.cells[from];
+    const ages = state.ages[from];
+    const looseContactAges = state.looseContactAges[from];
+    const damage = state.damage[from];
+    const stress = state.stress[from];
+    const visualStress = state.visualStress[from];
+    const stressVisibility = state.stressVisibility[from];
+    const visualX = state.visualX[from];
+    const visualY = state.visualY[from];
+    const vx = state.vx[from];
+    const vy = state.vy[from];
+
+    setCell(to, kind);
+    state.ages[to] = ages;
+    state.looseContactAges[to] = looseContactAges;
+    state.damage[to] = damage;
+    state.stress[to] = stress;
+    state.visualStress[to] = visualStress;
+    state.stressVisibility[to] = stressVisibility;
+    state.visualX[to] = visualX;
+    state.visualY[to] = visualY;
+    state.vx[to] = vx;
+    state.vy[to] = vy;
+    clearCell(from, false);
+    state.touched[to] = state.tick;
   }
 
   function findPackedContactCells(body) {
@@ -362,6 +585,23 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     return Math.abs(sum) * 0.5;
   }
 
+  function dot(a, b) {
+    return a.x * b.x + a.y * b.y;
+  }
+
+  function length(v) {
+    return Math.hypot(v.x, v.y);
+  }
+
+  function normalize(v) {
+    const value = length(v);
+    if (value === 0) return { x: 0, y: 0 };
+    return {
+      x: v.x / value,
+      y: v.y / value,
+    };
+  }
+
   function isPointInPolygon(x, y, vertices) {
     let inside = false;
     for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
@@ -405,5 +645,6 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     clearBodyGroups,
     registerBodyGroup,
     update,
+    logRollerTerrainDebug,
   };
 }

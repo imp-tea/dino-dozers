@@ -14,16 +14,18 @@ export function createPhysicsTerrain({ world, contours, cellsPerWorldUnit = 1 })
 
     if (terrainBody) world.destroyBody(terrainBody);
     terrainBody = world.createBody();
+    terrainBody.setUserData({ kind: "packed-terrain" });
 
     for (const contour of contours.getContours()) {
       if (contour.length < 3) continue;
 
       const vertices = contour.map((point) => Vec2(point.x * cellToWorldScale, point.y * cellToWorldScale));
-      terrainBody.createFixture({
+      const fixture = terrainBody.createFixture({
         shape: Chain(vertices, true),
         friction: 1.4,
         restitution: 0,
       });
+      fixture.setUserData({ kind: "packed-terrain" });
     }
 
     dirty = false;

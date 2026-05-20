@@ -1,7 +1,7 @@
 import { EMPTY, LOOSE, PACKED } from "./cellTypes.js";
 import { DEFAULT_MATERIAL_ID, MATERIALS } from "./materials.js";
 
-const RIGID_LOAD_SCALE = 0.18;
+const RIGID_LOAD_SCALE = 0.45;
 const RIGID_BREAK_SPEED = 6;
 const RIGID_BREAK_DAMAGE = 0.0225;
 const RIGID_LOOSE_KICK = 0.45;
@@ -31,6 +31,8 @@ const SUPPORT_RELIEF_OFFSETS = [
   [1, 0, 0.35],
 ];
 const PACKED_STRESS_SCALE = 4;
+const STRESS_PROJECT_EPSILON = 0.001;
+const STRESS_FULL_PROJECT_INTERVAL_TICKS = 30;
 const LOOSE_PACK_CONTACT_TICKS = 20;
 
 const DEFAULT_SETTINGS = {
@@ -251,8 +253,11 @@ export function createDirtSimulation({
 
   function moveLoose(from, to) {
     if (from === to) return from;
-    updateCellCounts(state.cells[to], state.cells[from], false);
-    state.cells[to] = state.cells[from];
+    const fromKind = state.cells[from];
+    const toKind = state.cells[to];
+    updateCellCounts(toKind, fromKind, false);
+    state.cells[to] = fromKind;
+    packedStress.markCellChanged(to, toKind, fromKind);
     state.ages[to] = state.ages[from];
     state.damage[to] = state.damage[from];
     state.stress[to] = state.stress[from];
@@ -346,6 +351,14 @@ export function createDirtSimulation({
     packedStress.analyze(settings);
   }
 
+  function markStressCellChanged(i, fromKind, toKind) {
+    packedStress.markCellChanged(i, fromKind, toKind);
+  }
+
+  function resetStressModel() {
+    packedStress.markAllDirty();
+  }
+
   function isConfinedPackedCell(i) {
     const x = i % state.width;
     const y = Math.floor(i / state.width);
@@ -389,6 +402,7 @@ export function createDirtSimulation({
     let total = 0;
     let packedCounts = new Uint16Array(0);
     let occupied = new Uint8Array(0);
+    let baseSupported = new Uint8Array(0);
     let supported = new Uint8Array(0);
     let seen = new Uint32Array(0);
     let stress = new Float32Array(0);
@@ -397,15 +411,30 @@ export function createDirtSimulation({
     let externalLoads = new Float32Array(0);
     let looseLoads = new Float32Array(0);
     let unsupported = new Uint8Array(0);
+    let previousUnsupported = new Uint8Array(0);
+    let dirty = new Uint8Array(0);
+    let project = new Uint8Array(0);
     let seenToken = 0;
+    let dirtyAll = true;
+    let forceFullProjection = true;
+    let lastParticleWeight = Number.NaN;
+    let lastBridgePenalty = Number.NaN;
+    let lastThreshold = Number.NaN;
+    let lastFatigue = Number.NaN;
+    let lastFullProjectionTick = -STRESS_FULL_PROJECT_INTERVAL_TICKS;
     const cluster = [];
     const queue = [];
+    const dirtyList = [];
+    const projectList = [];
 
     function analyze(settings) {
       resizeIfNeeded();
-      clearModel();
-      buildModel(settings.weight);
+      updateSettingsProjectState(settings);
+      refreshCachedModel(settings.weight);
+      clearSolveModel();
+      buildDynamicModel();
       analyzeCoarseClusters(settings);
+      updateUnsupportedProjectionState();
       projectStress(settings);
     }
 
@@ -420,6 +449,7 @@ export function createDirtSimulation({
       total = nextTotal;
       packedCounts = new Uint16Array(total);
       occupied = new Uint8Array(total);
+      baseSupported = new Uint8Array(total);
       supported = new Uint8Array(total);
       seen = new Uint32Array(total);
       stress = new Float32Array(total);
@@ -428,34 +458,129 @@ export function createDirtSimulation({
       externalLoads = new Float32Array(total);
       looseLoads = new Float32Array(total);
       unsupported = new Uint8Array(total);
+      previousUnsupported = new Uint8Array(total);
+      dirty = new Uint8Array(total);
+      project = new Uint8Array(total);
       seenToken = 0;
+      markAllDirty();
     }
 
-    function clearModel() {
-      packedCounts.fill(0);
-      occupied.fill(0);
-      supported.fill(0);
-      stress.fill(0);
+    function updateSettingsProjectState(settings) {
+      if (
+        settings.bridgePenalty !== lastBridgePenalty ||
+        settings.cohesion !== lastThreshold ||
+        settings.fatigue !== lastFatigue
+      ) {
+        forceFullProjection = true;
+      }
+
+      lastBridgePenalty = settings.bridgePenalty;
+      lastThreshold = settings.cohesion;
+      lastFatigue = settings.fatigue;
+    }
+
+    function refreshCachedModel(particleWeight) {
+      if (particleWeight !== lastParticleWeight) {
+        lastParticleWeight = particleWeight;
+        markAllDirty();
+      }
+
+      if (dirtyAll) {
+        for (let i = 0; i < total; i++) rebuildCoarseAggregate(i, particleWeight);
+        dirty.fill(0);
+        dirtyList.length = 0;
+        dirtyAll = false;
+        forceFullProjection = true;
+        return;
+      }
+
+      for (const i of dirtyList) {
+        dirty[i] = 0;
+        rebuildCoarseAggregate(i, particleWeight);
+        markProjectCoarseWithHalo(i);
+      }
+      dirtyList.length = 0;
+    }
+
+    function clearSolveModel() {
+      supported.set(baseSupported);
       loads.fill(0);
       externalLoads.fill(0);
-      looseLoads.fill(0);
       unsupported.fill(0);
     }
 
-    function buildModel(particleWeight) {
-      const fineTotal = state.width * state.height;
-      for (let i = 0; i < fineTotal; i++) {
-        if (state.cells[i] !== PACKED) continue;
+    function buildDynamicModel() {
+      forEachActiveBounds((bounds) => {
+        for (let y = bounds.minY; y <= bounds.maxY; y++) {
+          for (let x = bounds.minX; x <= bounds.maxX; x++) {
+            const i = index(x, y);
+            if (state.cells[i] !== PACKED) continue;
 
-        const x = i % state.width;
-        const y = Math.floor(i / state.width);
-        const ci = coarseIndexForCell(x, y);
-        packedCounts[ci]++;
-        occupied[ci] = 1;
-        externalLoads[ci] += state.externalLoad[i];
-        looseLoads[ci] += looseOverburden(i, particleWeight);
-        if (y === state.height - 1 || hasRigidSupport(i)) supported[ci] = 1;
+            const ci = coarseIndexForCell(x, y);
+            externalLoads[ci] += state.externalLoad[i];
+            if (hasRigidSupport(i)) supported[ci] = 1;
+            markProjectCoarseWithHalo(ci);
+          }
+        }
+      });
+    }
+
+    function rebuildCoarseAggregate(ci, particleWeight) {
+      const coarseX = ci % coarseWidth;
+      const coarseY = Math.floor(ci / coarseWidth);
+      const minX = coarseX * PACKED_STRESS_SCALE;
+      const maxX = Math.min(state.width - 1, minX + PACKED_STRESS_SCALE - 1);
+      const minY = coarseY * PACKED_STRESS_SCALE;
+      const maxY = Math.min(state.height - 1, minY + PACKED_STRESS_SCALE - 1);
+
+      packedCounts[ci] = 0;
+      occupied[ci] = 0;
+      baseSupported[ci] = 0;
+      looseLoads[ci] = 0;
+
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          const i = index(x, y);
+          if (state.cells[i] !== PACKED) continue;
+          packedCounts[ci]++;
+          occupied[ci] = 1;
+          looseLoads[ci] += looseOverburden(i, particleWeight);
+          if (y === state.height - 1) baseSupported[ci] = 1;
+        }
       }
+    }
+
+    function markCellChanged(i, fromKind, toKind) {
+      if (fromKind === toKind) return;
+      if (total === 0 || dirtyAll) {
+        markAllDirty();
+        return;
+      }
+
+      const x = i % state.width;
+      const y = Math.floor(i / state.width);
+      if (fromKind === PACKED || toKind === PACKED) markCoarseDirtyAtCell(x, y);
+      if (fromKind === LOOSE || toKind === LOOSE) markOverburdenDirty(x, y);
+    }
+
+    function markOverburdenDirty(x, y) {
+      const maxY = Math.min(state.height - 1, y + 8);
+      for (let yy = y + 1; yy <= maxY; yy++) markCoarseDirtyAtCell(x, yy);
+    }
+
+    function markCoarseDirtyAtCell(x, y) {
+      if (x < 0 || x >= state.width || y < 0 || y >= state.height) return;
+      const ci = coarseIndexForCell(x, y);
+      if (dirtyAll || dirty[ci]) return;
+      dirty[ci] = 1;
+      dirtyList.push(ci);
+    }
+
+    function markAllDirty() {
+      dirtyAll = true;
+      forceFullProjection = true;
+      dirtyList.length = 0;
+      projectList.length = 0;
     }
 
     function analyzeCoarseClusters(settings) {
@@ -562,9 +687,11 @@ export function createDirtSimulation({
         const bending = coarseBendingPenalty(i);
         const bearing = coarseBearingPenalty(i);
         const averageLoad = loads[i] / Math.max(1, packedCounts[i]);
-        stress[i] = isCoarseConfined(i)
+        const nextStress = isCoarseConfined(i)
           ? 0
           : (averageLoad * (1 + bending + bearing)) / coarseSupportRelief(i);
+        if (Math.abs(stress[i] - nextStress) > STRESS_PROJECT_EPSILON) markProjectCoarseWithHalo(i);
+        stress[i] = nextStress;
 
         if (parent >= 0) loads[parent] += loads[i];
       }
@@ -652,37 +779,100 @@ export function createDirtSimulation({
     function projectStress(settings) {
       const threshold = settings.cohesion;
       const fatigue = settings.fatigue;
+      const shouldProjectAll =
+        forceFullProjection ||
+        state.tick < lastFullProjectionTick ||
+        state.tick - lastFullProjectionTick >= STRESS_FULL_PROJECT_INTERVAL_TICKS;
+
+      if (shouldProjectAll) {
+        projectAllStress(threshold, fatigue);
+        project.fill(0);
+        projectList.length = 0;
+        forceFullProjection = false;
+        lastFullProjectionTick = state.tick;
+        return;
+      }
+
+      for (const ci of projectList) {
+        project[ci] = 0;
+        projectCoarseStress(ci, threshold, fatigue);
+      }
+      projectList.length = 0;
+    }
+
+    function projectAllStress(threshold, fatigue) {
       const fineTotal = state.width * state.height;
+      for (let i = 0; i < fineTotal; i++) projectFineStress(i, threshold, fatigue);
+    }
 
-      for (let i = 0; i < fineTotal; i++) {
-        if (state.cells[i] !== PACKED) {
-          state.stress[i] = 0;
-          continue;
-        }
+    function projectCoarseStress(ci, threshold, fatigue) {
+      const coarseX = ci % coarseWidth;
+      const coarseY = Math.floor(ci / coarseWidth);
+      const minX = coarseX * PACKED_STRESS_SCALE;
+      const maxX = Math.min(state.width - 1, minX + PACKED_STRESS_SCALE - 1);
+      const minY = coarseY * PACKED_STRESS_SCALE;
+      const maxY = Math.min(state.height - 1, minY + PACKED_STRESS_SCALE - 1);
 
-        const x = i % state.width;
-        const y = Math.floor(i / state.width);
-        const ci = coarseIndexForCell(x, y);
-        if (unsupported[ci]) {
-          setCell(i, LOOSE);
-          continue;
-        }
-
-        const exposed = isConfinedPackedCell(i) ? 0.35 : 1;
-        const projectedStress = stress[ci] * exposed;
-        state.stress[i] = projectedStress;
-
-        if (projectedStress > threshold) {
-          const excess = (projectedStress - threshold) / Math.max(threshold, 1);
-          state.damage[i] += fatigue * excess;
-        } else {
-          state.damage[i] *= 0.82;
-        }
-
-        if (projectedStress > threshold * 1.35 || state.damage[i] >= 1) {
-          setCell(i, LOOSE);
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          projectFineStress(index(x, y), threshold, fatigue);
         }
       }
+    }
+
+    function projectFineStress(i, threshold, fatigue) {
+      if (state.cells[i] !== PACKED) {
+        state.stress[i] = 0;
+        return;
+      }
+
+      const x = i % state.width;
+      const y = Math.floor(i / state.width);
+      const ci = coarseIndexForCell(x, y);
+      if (unsupported[ci]) {
+        setCell(i, LOOSE);
+        return;
+      }
+
+      const exposed = isConfinedPackedCell(i) ? 0.35 : 1;
+      const projectedStress = stress[ci] * exposed;
+      state.stress[i] = projectedStress;
+
+      if (projectedStress > threshold) {
+        const excess = (projectedStress - threshold) / Math.max(threshold, 1);
+        state.damage[i] += fatigue * excess;
+      } else {
+        state.damage[i] *= 0.82;
+      }
+
+      if (projectedStress > threshold * 1.35 || state.damage[i] >= 1) {
+        setCell(i, LOOSE);
+      }
+    }
+
+    function updateUnsupportedProjectionState() {
+      for (let i = 0; i < total; i++) {
+        if (unsupported[i] !== previousUnsupported[i]) markProjectCoarseWithHalo(i);
+      }
+      previousUnsupported.set(unsupported);
+    }
+
+    function markProjectCoarseWithHalo(ci) {
+      const x = ci % coarseWidth;
+      const y = Math.floor(ci / coarseWidth);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          markProjectCoarseAt(x + dx, y + dy);
+        }
+      }
+    }
+
+    function markProjectCoarseAt(x, y) {
+      if (x < 0 || x >= coarseWidth || y < 0 || y >= coarseHeight) return;
+      const ci = y * coarseWidth + x;
+      if (project[ci]) return;
+      project[ci] = 1;
+      projectList.push(ci);
     }
 
     function coarseDensity(i) {
@@ -693,7 +883,7 @@ export function createDirtSimulation({
       return Math.floor(y / PACKED_STRESS_SCALE) * coarseWidth + Math.floor(x / PACKED_STRESS_SCALE);
     }
 
-    return { analyze };
+    return { analyze, markCellChanged, markAllDirty };
   }
 
   return {
@@ -701,5 +891,7 @@ export function createDirtSimulation({
     updateLoose,
     analyzePackedClusters,
     applyRigidTerrainEffects,
+    markStressCellChanged,
+    resetStressModel,
   };
 }
