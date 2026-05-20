@@ -33,11 +33,29 @@ import {
   WRECKERSAURUS_SUSPENSION_DAMPING,
   WRECKERSAURUS_SUSPENSION_FREQUENCY,
   WRECKERSAURUS_TAIL_BALL_RADIUS,
+  WRECKERSAURUS_TAIL_BALL_DENSITY,
   WRECKERSAURUS_TAIL_BALL_CENTER,
+  WRECKERSAURUS_TAIL_BODY_DENSITY,
   WRECKERSAURUS_TAIL_CENTER,
+  WRECKERSAURUS_TAIL_DOWNSWING_DURATION,
+  WRECKERSAURUS_TAIL_DOWNSWING_IMPULSE,
+  WRECKERSAURUS_TAIL_DOWNSWING_REACTION_SCALE,
+  WRECKERSAURUS_TAIL_DOWNSWING_TORQUE,
   WRECKERSAURUS_TAIL_LENGTH,
+  WRECKERSAURUS_TAIL_MAX_TORQUE,
+  WRECKERSAURUS_TAIL_PACKED_MELT_ANGULAR_SLOWDOWN,
+  WRECKERSAURUS_TAIL_PACKED_MELT_CONTACT_RADIUS_SCALE,
   WRECKERSAURUS_TAIL_RAISED_ANGLE,
+  WRECKERSAURUS_TAIL_RAISED_DAMPING,
+  WRECKERSAURUS_TAIL_RAISED_STIFFNESS,
+  WRECKERSAURUS_TAIL_RAISE_RATE,
+  WRECKERSAURUS_TAIL_RECOVER_RATE,
+  WRECKERSAURUS_TAIL_RELEASE_DURATION,
   WRECKERSAURUS_TAIL_REST_ANGLE,
+  WRECKERSAURUS_TAIL_REST_DAMPING,
+  WRECKERSAURUS_TAIL_REST_STIFFNESS,
+  WRECKERSAURUS_TAIL_SLAM_DAMPING,
+  WRECKERSAURUS_TAIL_SLAM_STIFFNESS,
   WRECKERSAURUS_TAIL_TERRAIN_DAMAGE_SCALE,
   WRECKERSAURUS_TAIL_WIDTH,
   WRECKERSAURUS_TOOTH_TERRAIN_DAMAGE_SCALE,
@@ -108,6 +126,10 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       tail: {
         angle: activeVehicle.tail.joint.getJointAngle(),
         angularVelocity: activeVehicle.tail.body.getAngularVelocity(),
+        raiseBlend: activeVehicle.tail.raiseBlend,
+        releaseTimer: activeVehicle.tail.releaseTimer,
+        downswingTimer: activeVehicle.tail.downswingTimer,
+        releaseCharge: activeVehicle.tail.releaseCharge,
       },
     };
   }
@@ -324,8 +346,8 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     const body = physicsWorld.createDynamicBody({
       position: chassis.getWorldPoint(localPivot),
       angle: chassis.getAngle() + initialAngle,
-      angularDamping: 0.55,
-      linearDamping: 0.18,
+      angularDamping: 0.16,
+      linearDamping: 0.08,
       bullet: true,
     });
     body.setUserData({
@@ -342,14 +364,14 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
         Vec2(axis * WRECKERSAURUS_TAIL_CENTER, 0),
         0,
       ),
-      density: 0.12,
+      density: WRECKERSAURUS_TAIL_BODY_DENSITY,
       friction: 0.85,
       restitution: 0.02,
       filterGroupIndex: WRECKERSAURUS_COLLISION_GROUP,
     });
     const ballFixture = body.createFixture({
       shape: Circle(Vec2(axis * WRECKERSAURUS_TAIL_BALL_CENTER, 0), WRECKERSAURUS_TAIL_BALL_RADIUS),
-      density: 1.45,
+      density: WRECKERSAURUS_TAIL_BALL_DENSITY,
       friction: 0.95,
       restitution: 0.03,
       filterGroupIndex: WRECKERSAURUS_COLLISION_GROUP,
@@ -357,17 +379,20 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     ballFixture.setUserData({
       terrainDamageScale: 1.45,
       terrainLoadScale: 1.25,
+      packedMeltActive: false,
+      packedMeltAngularSlowdown: WRECKERSAURUS_TAIL_PACKED_MELT_ANGULAR_SLOWDOWN,
+      packedMeltContactRadiusScale: WRECKERSAURUS_TAIL_PACKED_MELT_CONTACT_RADIUS_SCALE,
     });
-    const lowerAngle = facing === WRECKERSAURUS_FACING_RIGHT ? 0.06 : -1.62;
+    const lowerAngle = facing === WRECKERSAURUS_FACING_RIGHT ? -0.06 : -1.5;
     const upperAngle = facing === WRECKERSAURUS_FACING_RIGHT ? 1.62 : -0.06;
     const joint = physicsWorld.createJoint(RevoluteJoint({
       referenceAngle: 0,
       enableLimit: true,
       lowerAngle,
       upperAngle,
-      enableMotor: true,
+      enableMotor: false,
       motorSpeed: 0,
-      maxMotorTorque: 4200,
+      maxMotorTorque: 0,
       collideConnected: false,
     }, chassis, body, body.getPosition()));
 
@@ -376,9 +401,15 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       facing,
       localPivot,
       body,
+      ballFixture,
       joint,
       restAngle,
       raisedAngle,
+      raiseBlend: savedState?.raiseBlend ?? 0,
+      releaseTimer: savedState?.releaseTimer ?? 0,
+      downswingTimer: savedState?.downswingTimer ?? 0,
+      releaseCharge: savedState?.releaseCharge ?? 0,
+      wasRaised: false,
     };
   }
 
@@ -913,12 +944,62 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     if (!tail) return;
 
     const raised = joypad.tailRaise || activeKeys.has("ControlLeft");
-    const target = raised ? tail.raisedAngle : tail.restAngle;
+    if (raised) {
+      tail.raiseBlend = clamp(tail.raiseBlend + WRECKERSAURUS_TAIL_RAISE_RATE * dt, 0, 1);
+      tail.releaseTimer = 0;
+      tail.downswingTimer = 0;
+      tail.releaseCharge = tail.raiseBlend;
+    } else {
+      if (tail.wasRaised) {
+        tail.releaseTimer = WRECKERSAURUS_TAIL_RELEASE_DURATION;
+        tail.downswingTimer = WRECKERSAURUS_TAIL_DOWNSWING_DURATION;
+        tail.releaseCharge = tail.raiseBlend;
+        const impulse = -WRECKERSAURUS_TAIL_DOWNSWING_IMPULSE * tail.releaseCharge;
+        tail.body.applyAngularImpulse(impulse, true);
+        tail.chassis.applyAngularImpulse(-impulse * WRECKERSAURUS_TAIL_DOWNSWING_REACTION_SCALE, true);
+      }
+      tail.raiseBlend = clamp(tail.raiseBlend - WRECKERSAURUS_TAIL_RECOVER_RATE * dt, 0, 1);
+      tail.releaseTimer = Math.max(0, tail.releaseTimer - dt);
+      tail.downswingTimer = Math.max(0, tail.downswingTimer - dt);
+    }
+    tail.wasRaised = raised;
+
+    const releaseAmount = tail.releaseTimer > 0 ? tail.releaseTimer / WRECKERSAURUS_TAIL_RELEASE_DURATION : 0;
+    const ballData = tail.ballFixture.getUserData?.();
+    if (ballData) ballData.packedMeltActive = releaseAmount > 0;
+    const activeBlend = raised ? tail.raiseBlend : 0;
+    const target = tail.restAngle + normalizeAngle(tail.raisedAngle - tail.restAngle) * activeBlend;
     const error = normalizeAngle(target - tail.joint.getJointAngle());
-    const damping = tail.joint.getJointSpeed() * (raised ? 0.62 : 0.28);
-    const motorSpeed = clamp(error * (raised ? 9.5 : 7.2) - damping, -9.5, 9.5);
-    tail.joint.setMaxMotorTorque(raised ? 13500 : 3600);
-    tail.joint.setMotorSpeed(Math.abs(error) < 0.015 ? 0 : motorSpeed);
+    const springBlend = releaseAmount > 0 ? 0 : activeBlend;
+    const stiffness = WRECKERSAURUS_TAIL_SLAM_STIFFNESS * releaseAmount
+      + (WRECKERSAURUS_TAIL_REST_STIFFNESS
+      + (WRECKERSAURUS_TAIL_RAISED_STIFFNESS - WRECKERSAURUS_TAIL_REST_STIFFNESS) * springBlend) * (1 - releaseAmount);
+    const damping = WRECKERSAURUS_TAIL_SLAM_DAMPING * releaseAmount
+      + (WRECKERSAURUS_TAIL_REST_DAMPING
+      + (WRECKERSAURUS_TAIL_RAISED_DAMPING - WRECKERSAURUS_TAIL_REST_DAMPING) * springBlend) * (1 - releaseAmount);
+    const torque = clamp(
+      stiffness * error - damping * tail.joint.getJointSpeed(),
+      -WRECKERSAURUS_TAIL_MAX_TORQUE,
+      WRECKERSAURUS_TAIL_MAX_TORQUE,
+    );
+    const downswingAmount = tail.downswingTimer > 0
+      ? tail.downswingTimer / WRECKERSAURUS_TAIL_DOWNSWING_DURATION
+      : 0;
+    const downswingTorque = -WRECKERSAURUS_TAIL_DOWNSWING_TORQUE
+      * tail.releaseCharge
+      * downswingAmount
+      * downswingAmount;
+    const springTorque = torque;
+    const totalTorque = clamp(
+      springTorque + downswingTorque,
+      -WRECKERSAURUS_TAIL_MAX_TORQUE - WRECKERSAURUS_TAIL_DOWNSWING_TORQUE,
+      WRECKERSAURUS_TAIL_MAX_TORQUE,
+    );
+    tail.body.applyTorque(totalTorque, true);
+    tail.chassis.applyTorque(
+      -springTorque - downswingTorque * WRECKERSAURUS_TAIL_DOWNSWING_REACTION_SCALE,
+      true,
+    );
   }
 
   function pollJoypad() {
@@ -1350,6 +1431,10 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       tail: {
         angle: -previous.tail.joint.getJointAngle(),
         angularVelocity: -previous.tail.body.getAngularVelocity(),
+        raiseBlend: previous.tail.raiseBlend,
+        releaseTimer: previous.tail.releaseTimer,
+        downswingTimer: previous.tail.downswingTimer,
+        releaseCharge: previous.tail.releaseCharge,
       },
     };
   

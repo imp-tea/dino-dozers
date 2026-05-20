@@ -212,7 +212,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
       if (shape.m_vertices) {
         rasterizeRigidPolygon(body, shape.m_vertices, massShare, fixtureTerrainMassShare, fixtureImpactMassShare);
       } else if (shape.m_radius != null) {
-        rasterizeRigidCircleShape(body, shape, massShare, fixtureTerrainMassShare, fixtureImpactMassShare);
+        rasterizeRigidCircleShape(body, shape, massShare, fixtureTerrainMassShare, fixtureImpactMassShare, fixture);
       }
     }
   }
@@ -240,6 +240,15 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
   function getFixtureTerrainImpactScale(fixture) {
     const userData = fixture.getUserData?.();
     return userData?.terrainDamageScale ?? 1;
+  }
+
+  function getFixturePackedMeltConfig(fixture) {
+    const userData = fixture.getUserData?.();
+    if (userData?.packedMeltActive !== true) return null;
+    return {
+      angularSlowdown: Math.max(0, userData.packedMeltAngularSlowdown ?? 0),
+      contactRadiusScale: Math.max(0, userData.packedMeltContactRadiusScale ?? 0.85),
+    };
   }
 
   function getBodyTerrainFlattenConfig(body) {
@@ -833,7 +842,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     }
   }
 
-  function rasterizeRigidCircleShape(body, shape, massShare, terrainMassShare, impactMassShare) {
+  function rasterizeRigidCircleShape(body, shape, massShare, terrainMassShare, impactMassShare, fixture = null) {
     const center = worldToCellPoint(shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition());
     const radius = shape.m_radius * cellsPerWorldUnit;
 
@@ -846,14 +855,96 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     const cellMass = massShare / area;
     const terrainCellMass = terrainMassShare / area;
     const impactCellMass = impactMassShare / area;
+    const packedMelt = getFixturePackedMeltConfig(fixture);
+    let meltedCells = 0;
 
     for (let y = minY; y <= maxY; y++) {
       for (let x = minX; x <= maxX; x++) {
         const dx = x + 0.5 - center.x;
         const dy = y + 0.5 - center.y;
         if (dx * dx + dy * dy > radiusSq) continue;
+        if (packedMelt && meltPackedCellAt(x, y, body)) meltedCells++;
         markRigidCell(x, y, body, cellMass, terrainCellMass, impactCellMass);
       }
+    }
+
+    if (packedMelt) {
+      const contactRadius = Math.max(1, radius * packedMelt.contactRadiusScale);
+      for (const contact of collectTerrainContactsForFixture(body, fixture)) {
+        meltedCells += meltPackedCellsNearPoint(contact.point, contactRadius, body);
+      }
+    }
+
+    if (meltedCells > 0 && packedMelt.angularSlowdown > 0) {
+      slowAngularVelocity(body, packedMelt.angularSlowdown * meltedCells);
+    }
+  }
+
+  function collectTerrainContactsForFixture(body, fixture) {
+    const contacts = [];
+    if (!body || !fixture) return contacts;
+
+    for (let edge = body.getContactList?.(); edge; edge = edge.next) {
+      const contact = edge.contact;
+      if (!contact?.isTouching?.()) continue;
+      const fixtureA = contact.getFixtureA?.();
+      const fixtureB = contact.getFixtureB?.();
+      const matchesA = fixtureA === fixture;
+      const matchesB = fixtureB === fixture;
+      if (!matchesA && !matchesB) continue;
+
+      const otherFixture = matchesA ? fixtureB : fixtureA;
+      if (!isTerrainFixture(otherFixture)) continue;
+
+      const manifold = contact.getWorldManifold?.(null);
+      if (!manifold?.pointCount) continue;
+      for (let i = 0; i < manifold.pointCount; i++) {
+        contacts.push({
+          point: worldToCellPoint(manifold.points[i]),
+        });
+      }
+    }
+
+    return contacts;
+  }
+
+  function meltPackedCellsNearPoint(point, radius, body) {
+    let melted = 0;
+    const minX = Math.max(0, Math.floor(point.x - radius));
+    const maxX = Math.min(state.width - 1, Math.ceil(point.x + radius));
+    const minY = Math.max(0, Math.floor(point.y - radius));
+    const maxY = Math.min(state.height - 1, Math.ceil(point.y + radius));
+    const radiusSq = radius * radius;
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const dx = x + 0.5 - point.x;
+        const dy = y + 0.5 - point.y;
+        if (dx * dx + dy * dy > radiusSq) continue;
+        if (meltPackedCellAt(x, y, body)) melted++;
+      }
+    }
+
+    return melted;
+  }
+
+  function meltPackedCellAt(x, y, body) {
+    const i = index(x, y);
+    if (state.cells[i] !== PACKED) return false;
+    setCell(i, LOOSE);
+    const velocity = body.getLinearVelocityFromWorldPoint(cellToWorldPoint(x + 0.5, y + 0.5));
+    state.vx[i] = Math.trunc(velocity.x * cellsPerWorldUnit);
+    state.vy[i] = Math.trunc(Math.max(0, velocity.y * cellsPerWorldUnit));
+    state.touched[i] = state.tick;
+    return true;
+  }
+
+  function slowAngularVelocity(body, amount) {
+    const velocity = body.getAngularVelocity?.() ?? 0;
+    if (velocity > 0) {
+      body.setAngularVelocity(Math.max(0, velocity - amount));
+    } else if (velocity < 0) {
+      body.setAngularVelocity(Math.min(0, velocity + amount));
     }
   }
 
