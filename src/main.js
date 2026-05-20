@@ -38,6 +38,7 @@ const VEHICLE_CONTROL_CODES = new Set([
   "KeyW",
   "KeyS",
   "Space",
+  "ControlLeft",
 ]);
 const CONTINUOUS_KEY_CODES = new Set([
   ...VEHICLE_CONTROL_CODES,
@@ -830,7 +831,8 @@ window.addEventListener("keyup", (event) => {
     event.code === "ArrowLeft" ||
     event.code === "KeyD" ||
     event.code === "ArrowRight" ||
-    event.code === "Space"
+    event.code === "Space" ||
+    event.code === "ControlLeft"
   ) {
     event.preventDefault();
   }
@@ -849,6 +851,7 @@ window.addEventListener("gamepaddisconnected", (event) => {
   joypad.armX = 0;
   joypad.armY = 0;
   joypad.headTurn = 0;
+  joypad.tailRaise = false;
   joypad.flattenActive = false;
   joypad.active = false;
 });

@@ -1,0 +1,265 @@
+:root {
+  color-scheme: light;
+  --ink: #202421;
+  --muted: #66706a;
+  --paper: #f5f1e9;
+  --panel: #fffdf8;
+  --line: #d8d0c0;
+  --field: #252925;
+  --accent: #18756d;
+  --accent-ink: #ffffff;
+  --button: #ece4d7;
+  --hot: #d94b38;
+  --shape: #ff66b3;
+  --shape-fill: rgba(255, 102, 179, 0.14);
+  --shadow: 0 18px 56px rgba(30, 34, 31, 0.13);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 38px;
+  border: 1px solid #cfc6b7;
+  border-radius: 7px;
+  background: var(--button);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #aaa08d;
+}
+
+.editor-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 16px;
+  min-height: 100%;
+  padding: 16px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  margin-bottom: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, rgba(217, 75, 56, 0.94), rgba(24, 117, 109, 0.9)),
+    #76533a;
+  box-shadow: inset 0 -8px 0 rgba(0, 0, 0, 0.14);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.08rem;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+h2 {
+  margin-bottom: 12px;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#selectionSummary {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.toolbar-controls label {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+select,
+input {
+  min-height: 38px;
+  border: 1px solid #cfc6b7;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.canvas-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100vh - 112px);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid #2f332f;
+  border-radius: 8px;
+  background: var(--field);
+  box-shadow: var(--shadow);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.panel-section {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.shape-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.control-grid label,
+.wide-control {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.control-grid input,
+.wide-control input {
+  width: 100%;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 430px;
+  resize: vertical;
+  border: 1px solid #cfc6b7;
+  border-radius: 7px;
+  background: #fbf8f1;
+  color: var(--ink);
+  padding: 10px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 1040px) {
+  .editor-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .editor-shell {
+    padding: 10px;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar-controls,
+  .toolbar-controls label {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .canvas-frame {
+    height: 58vh;
+    min-height: 340px;
+  }
+}

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dino Dozers Collider Editor</title>
+    <link rel="stylesheet" href="/src/tools/colliderEditor.css" />
+  </head>
+  <body>
+    <main class="editor-shell">
+      <section class="workbench" aria-label="Collider editor">
+        <header class="toolbar">
+          <div class="brand">
+            <span class="mark"></span>
+            <div>
+              <h1>Collider Editor</h1>
+              <p id="selectionSummary">No fixture selected</p>
+            </div>
+          </div>
+          <div class="toolbar-controls">
+            <label>
+              <span>Vehicle</span>
+              <select id="vehicleSelect"></select>
+            </label>
+            <label>
+              <span>Part</span>
+              <select id="partSelect"></select>
+            </label>
+            <label>
+              <span>Fixture</span>
+              <select id="fixtureSelect"></select>
+            </label>
+            <button id="resetView" type="button" title="Fit selected part">Fit</button>
+          </div>
+        </header>
+
+        <div class="canvas-frame">
+          <canvas id="editorCanvas" width="1280" height="820" aria-label="Editable vehicle collider canvas"></canvas>
+        </div>
+      </section>
+
+      <aside class="side-panel" aria-label="Fixture data">
+        <section class="panel-section">
+          <h2>Edit</h2>
+          <div id="shapeControls" class="shape-controls"></div>
+        </section>
+        <section class="panel-section">
+          <h2>Export</h2>
+          <div class="button-row">
+            <button id="copyPatch" type="button">Copy Patch</button>
+            <button id="logPatch" type="button">Log Patch</button>
+          </div>
+          <textarea id="patchOutput" spellcheck="false"></textarea>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/tools/colliderEditor.js"></script>
+  </body>
+</html>

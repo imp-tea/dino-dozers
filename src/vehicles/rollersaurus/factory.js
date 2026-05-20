@@ -109,12 +109,12 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
 
     chassis.createFixture({
       shape: Polygon(mirrorVertices([
-        Vec2(-6.12, -2.02),
-        Vec2(-5.22, -4.02),
-        Vec2(4.82, -4.36),
-        Vec2(6.0, -2.36),
-        Vec2(5.64, 0.36),
-        Vec2(-5.92, 0.5),
+        Vec2(-6.6023, -1.5538),
+        Vec2(-5.6048, -2.9086),
+        Vec2(0.7972, -2.9533),
+        Vec2(5.4424, -1.2262),
+        Vec2(5.5019, 0.0988),
+        Vec2(-6.2897, 0.1583),
       ], direction).map(scaleBodyVertex)),
       density: ROLLERSAURUS_CHASSIS_DENSITY,
       friction: 0.78,
@@ -123,11 +123,11 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     });
     chassis.createFixture({
       shape: Polygon(mirrorVertices([
-        Vec2(-4.45, -4.18),
-        Vec2(0.35, -5.04),
-        Vec2(3.95, -4.4),
-        Vec2(3.45, -2.8),
-        Vec2(-4.82, -2.62),
+        Vec2(-3.3864, -6.0203),
+        Vec2(-1.7487, -6.333),
+        Vec2(5.9784, -4.5613),
+        Vec2(6.0082, -2.9533),
+        Vec2(-5.039, -2.8938),
       ], direction).map(scaleBodyVertex)),
       density: ROLLERSAURUS_CHASSIS_DENSITY * 0.55,
       friction: 0.72,

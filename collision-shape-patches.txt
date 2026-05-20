@@ -1,0 +1,109 @@
+{
+  "vehicle": "wreckersaurus",
+  "part": "headTop",
+  "fixture": "head-main",
+  "label": "Head body",
+  "shape": "polygon",
+  "exportMode": "wreckDirt",
+  "data": {
+    "vertices": [
+      {
+        "x": -0.4141,
+        "y": -0.2131
+      },
+      {
+        "x": 0.3313,
+        "y": 2.8319
+      },
+      {
+        "x": 3.8762,
+        "y": 3.0955
+      },
+      {
+        "x": 7.3666,
+        "y": 3.2682
+      },
+      {
+        "x": 8.6391,
+        "y": -0.2494
+      },
+      {
+        "x": 1.5947,
+        "y": -0.204
+      }
+    ],
+    "planck": "Polygon([\n  Vec2(-0.4141, -0.2131),\n  Vec2(0.3313, 2.8319),\n  Vec2(3.8762, 3.0955),\n  Vec2(7.3666, 3.2682),\n  Vec2(8.6391, -0.2494),\n  Vec2(1.5947, -0.204)\n])"
+  }
+}
+
+{
+  "vehicle": "wreckersaurus",
+  "part": "jawBottom",
+  "fixture": "jaw-main",
+  "label": "Jaw body",
+  "shape": "polygon",
+  "exportMode": "wreckDirt",
+  "data": {
+    "vertices": [
+      {
+        "x": 0.212,
+        "y": -0.9951
+      },
+      {
+        "x": 2.191,
+        "y": -0.8663
+      },
+      {
+        "x": 8.5421,
+        "y": -1.1056
+      },
+      {
+        "x": 8.1279,
+        "y": -2.7348
+      },
+      {
+        "x": 0.2396,
+        "y": -2.9741
+      },
+      {
+        "x": -0.6164,
+        "y": -1.4646
+      }
+    ],
+    "planck": "Polygon([\n  Vec2(0.212, -0.9951),\n  Vec2(2.191, -0.8663),\n  Vec2(8.5421, -1.1056),\n  Vec2(8.1279, -2.7348),\n  Vec2(0.2396, -2.9741),\n  Vec2(-0.6164, -1.4646)\n])"
+  }
+}
+
+{
+  "vehicle": "wreckersaurus",
+  "part": "tail",
+  "fixture": "tail-beam",
+  "label": "Tail beam",
+  "shape": "box",
+  "exportMode": "box",
+  "data": {
+    "center": {
+      "x": -5.5,
+      "y": 0
+    },
+    "width": 12,
+    "height": 0.75,
+    "planck": "Box(6, 0.375, Vec2(-5.5, 0), 0)"
+  }
+}
+
+{
+  "vehicle": "wreckersaurus",
+  "part": "tail",
+  "fixture": "tail-ball",
+  "label": "Tail ball",
+  "shape": "circle",
+  "exportMode": "circle",
+  "data": {
+    "center": {
+      "x": -14.5,
+      "y": 0
+    },
+    "radius": 3.0907
+  }
+}

@@ -22,9 +22,20 @@ export const WRECKERSAURUS_FLIP_UPWARD_IMPULSE = 780;
 export const WRECKERSAURUS_FLIP_SIDE_IMPULSE = 120;
 export const WRECKERSAURUS_FLIP_ANGULAR_IMPULSE = 900;
 export const WRECKERSAURUS_FRACTURE_LOAD_MULTIPLIER = 0.78;
+export const WRECKERSAURUS_HEAD_TERRAIN_DAMAGE_SCALE = 2.35;
+export const WRECKERSAURUS_JAW_TERRAIN_DAMAGE_SCALE = 3.4;
+export const WRECKERSAURUS_TOOTH_TERRAIN_DAMAGE_SCALE = 5.8;
+export const WRECKERSAURUS_TAIL_TERRAIN_DAMAGE_SCALE = 4.6;
+export const WRECKERSAURUS_TAIL_REST_ANGLE = Math.PI / 4;
+export const WRECKERSAURUS_TAIL_RAISED_ANGLE = 1.36;
+export const WRECKERSAURUS_TAIL_LENGTH = 12;
+export const WRECKERSAURUS_TAIL_CENTER = 5.5;
+export const WRECKERSAURUS_TAIL_WIDTH = 0.75;
+export const WRECKERSAURUS_TAIL_BALL_CENTER = 14.5;
+export const WRECKERSAURUS_TAIL_BALL_RADIUS = 3.0907;
 export const WRECKERSAURUS_ARM_SERVO = {
   boomAngle: { gain: 3.1, damping: 0.28, speedScale: 1 },
-  stickAngle: { gain: 2.8, damping: 0.34, speedScale: 1.02 },
+  stickAngle: { gain: 3.35, damping: 0.48, speedScale: 0.96 },
   headAngle: { gain: 1.55, damping: 0.72, speedScale: 1.5 },
-  jawAngle: { gain: 1.45, damping: 0.68, speedScale: 1.5 },
+  jawAngle: { gain: 1.9, damping: 0.68, speedScale: 1.65 },
 };

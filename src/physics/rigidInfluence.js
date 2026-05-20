@@ -207,10 +207,12 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     const impactMassShare = massShare * group.damageScale * bodyTerrainImpactScale;
     for (const fixture of fixtures) {
       const shape = fixture.getShape();
+      const fixtureTerrainMassShare = terrainMassShare * getFixtureTerrainLoadScale(fixture);
+      const fixtureImpactMassShare = impactMassShare * getFixtureTerrainImpactScale(fixture);
       if (shape.m_vertices) {
-        rasterizeRigidPolygon(body, shape.m_vertices, massShare, terrainMassShare, impactMassShare);
+        rasterizeRigidPolygon(body, shape.m_vertices, massShare, fixtureTerrainMassShare, fixtureImpactMassShare);
       } else if (shape.m_radius != null) {
-        rasterizeRigidCircleShape(body, shape, massShare, terrainMassShare, impactMassShare);
+        rasterizeRigidCircleShape(body, shape, massShare, fixtureTerrainMassShare, fixtureImpactMassShare);
       }
     }
   }
@@ -227,6 +229,16 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function getBodyTerrainImpactScale(body) {
     const userData = body.getUserData?.();
+    return userData?.terrainDamageScale ?? 1;
+  }
+
+  function getFixtureTerrainLoadScale(fixture) {
+    const userData = fixture.getUserData?.();
+    return userData?.terrainLoadScale ?? 1;
+  }
+
+  function getFixtureTerrainImpactScale(fixture) {
+    const userData = fixture.getUserData?.();
     return userData?.terrainDamageScale ?? 1;
   }
 

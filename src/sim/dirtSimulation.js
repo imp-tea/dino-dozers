@@ -4,6 +4,8 @@ import { DEFAULT_MATERIAL_ID, MATERIALS } from "./materials.js";
 const RIGID_LOAD_SCALE = 0.45;
 const RIGID_BREAK_SPEED = 6;
 const RIGID_BREAK_DAMAGE = 0.0225;
+const RIGID_PRESSURE_BREAK_MASS = 0.08;
+const RIGID_PRESSURE_BREAK_DAMAGE = 0.1;
 const RIGID_LOOSE_KICK = 0.45;
 const RIGID_FRACTURE_OFFSETS = [
   [0, 0],
@@ -144,6 +146,10 @@ export function createDirtSimulation({
           }
 
           if (state.rigidImpactMass[i] <= 0) continue;
+
+          const pressure = Math.max(0, state.rigidImpactMass[i] - RIGID_PRESSURE_BREAK_MASS) * RIGID_PRESSURE_BREAK_DAMAGE;
+          if (pressure > 0) fracturePackedNearRigid(x, y, pressure, state.rigidVx[i], state.rigidVy[i]);
+
           if (speed < RIGID_BREAK_SPEED) continue;
           const impact = (speed - RIGID_BREAK_SPEED) * RIGID_BREAK_DAMAGE * Math.max(1, state.rigidImpactMass[i]);
           fracturePackedNearRigid(x, y, impact, state.rigidVx[i], state.rigidVy[i]);
