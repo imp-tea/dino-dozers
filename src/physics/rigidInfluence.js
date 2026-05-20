@@ -2,10 +2,11 @@ import { Vec2 } from "planck";
 import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
 
 const ROLLER_MIN_LINEAR_SPEED = 0.08;
-const ROLLER_WINDOW_HALF_SIZE = 5;
-const ROLLER_MAX_MOVES_PER_STEP = 5;
+const ROLLER_WINDOW_HALF_WIDTH = 3;
+const ROLLER_WINDOW_HALF_HEIGHT = 3;
+const ROLLER_MAX_MOVES_PER_STEP = 8;
 const ROLLER_PRESSURE_WEIGHT = 1;
-const ROLLER_GRAVITY_WEIGHT = 0.5;
+const ROLLER_GRAVITY_WEIGHT = 1;
 const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
 const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
@@ -355,10 +356,10 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function rollerSettleBounds(contact, depth) {
     return {
-      minX: Math.max(0, Math.floor(contact.x) - ROLLER_WINDOW_HALF_SIZE),
-      maxX: Math.min(state.width - 1, Math.floor(contact.x) + ROLLER_WINDOW_HALF_SIZE),
-      minY: Math.max(0, Math.floor(contact.y) - ROLLER_WINDOW_HALF_SIZE),
-      maxY: Math.min(state.height - 1, Math.floor(contact.y) + ROLLER_WINDOW_HALF_SIZE),
+      minX: Math.max(0, Math.floor(contact.x) - ROLLER_WINDOW_HALF_WIDTH),
+      maxX: Math.min(state.width - 1, Math.floor(contact.x) + ROLLER_WINDOW_HALF_WIDTH),
+      minY: Math.max(0, Math.floor(contact.y) - ROLLER_WINDOW_HALF_HEIGHT),
+      maxY: Math.min(state.height - 1, Math.floor(contact.y) + ROLLER_WINDOW_HALF_HEIGHT),
     };
   }
 

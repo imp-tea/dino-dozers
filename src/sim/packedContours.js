@@ -1,4 +1,4 @@
-import { PACKED } from "./cellTypes.js";
+import { EMPTY, PACKED } from "./cellTypes.js";
 
 const CONTOUR_REBUILD_INTERVAL_TICKS = 8;
 
@@ -36,15 +36,22 @@ export function createPackedContourCache({ state, grid }) {
     return inBounds(x, y) && state.cells[index(x, y)] === PACKED;
   }
 
+  function isEmptyCell(x, y) {
+    return !inBounds(x, y) || state.cells[index(x, y)] === EMPTY;
+  }
+
   function pointKey(x, y) {
     return `${x},${y}`;
   }
 
   function addEdge(edges, edgesByStart, sx, sy, ex, ey, cellX, cellY) {
+    const point = hasThreeEmptyCardinalNeighbors(cellX, cellY)
+      ? { x: cellX + 0.5, y: cellY + 0.5 }
+      : { x: (sx + ex) * 0.5, y: (sy + ey) * 0.5 };
     const edge = {
       start: { x: sx, y: sy },
       end: { x: ex, y: ey },
-      point: { x: (sx + ex) * 0.5, y: (sy + ey) * 0.5 },
+      point,
       used: false,
     };
     edges.push(edge);
@@ -53,6 +60,15 @@ export function createPackedContourCache({ state, grid }) {
     const bucket = edgesByStart.get(key);
     if (bucket) bucket.push(edge);
     else edgesByStart.set(key, [edge]);
+  }
+
+  function hasThreeEmptyCardinalNeighbors(x, y) {
+    let emptyNeighbors = 0;
+    if (isEmptyCell(x, y - 1)) emptyNeighbors++;
+    if (isEmptyCell(x + 1, y)) emptyNeighbors++;
+    if (isEmptyCell(x, y + 1)) emptyNeighbors++;
+    if (isEmptyCell(x - 1, y)) emptyNeighbors++;
+    return emptyNeighbors === 3;
   }
 
   function collectBoundaryEdges(outsideEmpty) {

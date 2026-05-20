@@ -22,7 +22,7 @@ export function createPhysicsTerrain({ world, contours, cellsPerWorldUnit = 1 })
       const vertices = contour.map((point) => Vec2(point.x * cellToWorldScale, point.y * cellToWorldScale));
       const fixture = terrainBody.createFixture({
         shape: Chain(vertices, true),
-        friction: 1.4,
+        friction: 1.8,
         restitution: 0,
       });
       fixture.setUserData({ kind: "packed-terrain" });
