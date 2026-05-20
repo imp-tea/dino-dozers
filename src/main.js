@@ -255,6 +255,7 @@ function seedWorld() {
   resetCellCounts();
   state.ages.fill(0);
   state.looseContactAges.fill(0);
+  state.looseSettleLocks.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
@@ -474,6 +475,7 @@ function stepPhysics(delta) {
   while (physicsAccumulator >= PHYSICS_STEP_SECONDS && iterations < 5) {
     vehicleManager.step(PHYSICS_STEP_SECONDS);
     physicsWorld.step(PHYSICS_STEP_SECONDS, 8, 3);
+    vehicleManager.afterPhysicsStep(PHYSICS_STEP_SECONDS);
     physicsAccumulator -= PHYSICS_STEP_SECONDS;
     iterations++;
   }
@@ -667,6 +669,7 @@ clearButton.addEventListener("click", () => {
   resetCellCounts();
   state.ages.fill(0);
   state.looseContactAges.fill(0);
+  state.looseSettleLocks.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);

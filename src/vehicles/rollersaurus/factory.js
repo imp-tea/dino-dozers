@@ -13,15 +13,19 @@ import {
   ROLLERSAURUS_DRIVE_SPEED,
   ROLLERSAURUS_FACING_LEFT,
   ROLLERSAURUS_FACING_RIGHT,
+  ROLLERSAURUS_FLATTEN_CHASSIS_FORWARD_FACTOR,
   ROLLERSAURUS_FLATTEN_CONTACT_GRAVITY_SCALE,
   ROLLERSAURUS_FLATTEN_DRIVE_SPEED,
   ROLLERSAURUS_FLATTEN_MAX_LINEAR_SPEED,
+  ROLLERSAURUS_FLATTEN_MIN_FORWARD_SPEED,
   ROLLERSAURUS_FLATTEN_SUSPENSION_DAMPING,
   ROLLERSAURUS_FLATTEN_SUSPENSION_FREQUENCY,
+  ROLLERSAURUS_FLATTEN_TARGET_FORWARD_SPEED,
   ROLLERSAURUS_FLIP_ANGULAR_IMPULSE,
   ROLLERSAURUS_FLIP_SIDE_IMPULSE,
   ROLLERSAURUS_FLIP_UPWARD_IMPULSE,
   ROLLERSAURUS_GAMEPAD_DEADZONE,
+  ROLLERSAURUS_FLATTEN_MOTOR_TORQUE,
   ROLLERSAURUS_MOTOR_TORQUE,
   ROLLERSAURUS_ROLLER_DENSITY,
   ROLLERSAURUS_ROLLER_FLATTEN_ANGULAR_SPEED,
@@ -66,6 +70,10 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
 
   function step(dt) {
     updateActiveVehicleMotor(dt);
+  }
+
+  function afterPhysicsStep() {
+    restoreFlattenForwardMomentum();
   }
 
   function draw(_ctx, viewport) {
@@ -262,9 +270,10 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
       if (signedTarget > lockedLimit) sharedWheelSpeed = driveSign * lockedLimit;
     }
 
+    const motorTorque = flattenModeActive ? ROLLERSAURUS_FLATTEN_MOTOR_TORQUE : ROLLERSAURUS_MOTOR_TORQUE;
     for (const joint of activeVehicle.wheelJoints) {
       joint.setMotorSpeed(sharedWheelSpeed);
-      joint.setMaxMotorTorque(ROLLERSAURUS_MOTOR_TORQUE);
+      joint.setMaxMotorTorque(motorTorque);
     }
 
     if (flattenModeActive) {
@@ -312,6 +321,29 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     const mass = roller.body.getMass?.() ?? 0;
     if (mass <= 0) return;
     roller.body.applyForceToCenter(Vec2(0, mass * 32 * ROLLERSAURUS_FLATTEN_CONTACT_GRAVITY_SCALE), true);
+  }
+
+  function restoreFlattenForwardMomentum() {
+    if (!activeVehicle || !flattenModeActive) return;
+    const direction = Math.sign(desiredDrive);
+    if (direction === 0) return;
+
+    const roller = activeVehicle.wheels.find((wheel) => wheel.subtype === "roller");
+    if (roller) enforceMinimumForwardSpeed(roller.body, direction, 1);
+    enforceMinimumForwardSpeed(activeVehicle.chassis, direction, ROLLERSAURUS_FLATTEN_CHASSIS_FORWARD_FACTOR);
+  }
+
+  function enforceMinimumForwardSpeed(body, direction, strength) {
+    const velocity = body.getLinearVelocity();
+    const forwardSpeed = velocity.x * direction;
+    const minForwardSpeed = ROLLERSAURUS_FLATTEN_MIN_FORWARD_SPEED * strength;
+    if (forwardSpeed >= minForwardSpeed) return;
+
+    const targetForwardSpeed = Math.min(
+      ROLLERSAURUS_FLATTEN_TARGET_FORWARD_SPEED * strength,
+      ROLLERSAURUS_FLATTEN_MAX_LINEAR_SPEED,
+    );
+    body.setLinearVelocity(Vec2(direction * targetForwardSpeed, velocity.y));
   }
 
   function getDriveInput() {
@@ -504,6 +536,7 @@ export function createRollersaurusVehicle({ world, ctx, input }) {
     destroy,
     getBodies: getActiveVehicleBodies,
     step,
+    afterPhysicsStep,
     draw,
     reset,
     captureState,

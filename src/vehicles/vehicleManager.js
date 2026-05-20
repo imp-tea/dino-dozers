@@ -22,6 +22,10 @@ export function createVehicleManager() {
     activeVehicle?.step?.(dt);
   }
 
+  function afterPhysicsStep(dt) {
+    activeVehicle?.afterPhysicsStep?.(dt);
+  }
+
   function draw(ctx, viewport) {
     activeVehicle?.draw?.(ctx, viewport);
   }
@@ -36,6 +40,7 @@ export function createVehicleManager() {
     clearActiveVehicle,
     getActiveVehicleBodies,
     step,
+    afterPhysicsStep,
     draw,
     reset,
   };

@@ -2,14 +2,15 @@ import { Vec2 } from "planck";
 import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
 
 const ROLLER_MIN_LINEAR_SPEED = 0.08;
-const ROLLER_WINDOW_HALF_WIDTH = 3;
+const ROLLER_WINDOW_HALF_WIDTH = 6;
 const ROLLER_WINDOW_HALF_HEIGHT = 3;
-const ROLLER_MAX_MOVES_PER_STEP = 8;
+const ROLLER_MAX_MOVES_PER_STEP = 3;
 const ROLLER_PRESSURE_WEIGHT = 1;
 const ROLLER_GRAVITY_WEIGHT = 1;
 const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
 const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
+const ROLLER_LOOSE_SETTLE_LOCK_TICKS = 18;
 
 export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, applyTerrainEffects = () => {} }) {
   const {
@@ -434,20 +435,23 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function moveDirtCell(from, to) {
     const kind = state.cells[from];
+    const targetKind = kind === PACKED ? LOOSE : kind;
     const ages = state.ages[from];
-    const looseContactAges = state.looseContactAges[from];
-    const damage = state.damage[from];
-    const stress = state.stress[from];
-    const visualStress = state.visualStress[from];
-    const stressVisibility = state.stressVisibility[from];
+    const looseContactAges = kind === PACKED ? 0 : state.looseContactAges[from];
+    const looseSettleLock = kind === PACKED ? ROLLER_LOOSE_SETTLE_LOCK_TICKS : state.looseSettleLocks[from];
+    const damage = targetKind === PACKED ? state.damage[from] : 0;
+    const stress = targetKind === PACKED ? state.stress[from] : 0;
+    const visualStress = targetKind === PACKED ? state.visualStress[from] : 0;
+    const stressVisibility = targetKind === PACKED ? state.stressVisibility[from] : 0;
     const visualX = state.visualX[from];
     const visualY = state.visualY[from];
     const vx = state.vx[from];
     const vy = state.vy[from];
 
-    setCell(to, kind);
+    setCell(to, targetKind);
     state.ages[to] = ages;
     state.looseContactAges[to] = looseContactAges;
+    state.looseSettleLocks[to] = looseSettleLock;
     state.damage[to] = damage;
     state.stress[to] = stress;
     state.visualStress[to] = visualStress;

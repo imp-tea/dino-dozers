@@ -9,6 +9,7 @@ export function createGridState({ width, height }) {
     cells: null,
     ages: null,
     looseContactAges: null,
+    looseSettleLocks: null,
     damage: null,
     stress: null,
     visualStress: null,
@@ -57,6 +58,7 @@ export function createGrid(state, callbacks = {}) {
     state.cells = new Uint8Array(total);
     state.ages = new Uint16Array(total);
     state.looseContactAges = new Uint16Array(total);
+    state.looseSettleLocks = new Uint16Array(total);
     state.damage = new Float32Array(total);
     state.stress = new Float32Array(total);
     state.visualStress = new Float32Array(total);
@@ -132,6 +134,7 @@ export function createGrid(state, callbacks = {}) {
     state.cells[i] = EMPTY;
     state.ages[i] = 0;
     state.looseContactAges[i] = 0;
+    state.looseSettleLocks[i] = 0;
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;
@@ -152,6 +155,7 @@ export function createGrid(state, callbacks = {}) {
     state.cells[i] = kind;
     state.ages[i] = 0;
     state.looseContactAges[i] = 0;
+    state.looseSettleLocks[i] = 0;
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;

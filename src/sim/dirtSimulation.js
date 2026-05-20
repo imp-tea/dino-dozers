@@ -34,6 +34,7 @@ const PACKED_STRESS_SCALE = 4;
 const STRESS_PROJECT_EPSILON = 0.001;
 const STRESS_FULL_PROJECT_INTERVAL_TICKS = 30;
 const LOOSE_PACK_CONTACT_TICKS = 20;
+const LOOSE_SETTLE_LOCK_NEAR_RIGID_RADIUS = 3;
 
 const DEFAULT_SETTINGS = {
   cohesion: 80,
@@ -192,7 +193,7 @@ export function createDirtSimulation({
   function updateLooseCell(start, settings) {
     if (state.cells[start] !== LOOSE) return;
     state.touched[start] = state.tick;
-    if (state.rigid[start] && pushLooseOutOfRigid(start) !== start) return;
+    if (state.rigid[start] && !isLooseSettleLocked(start) && pushLooseOutOfRigid(start) !== start) return;
 
     const moved = tryFallingSandMove(start, settings);
     const current = moved >= 0 ? moved : start;
@@ -205,6 +206,8 @@ export function createDirtSimulation({
 
     state.vx[current] = 0;
     state.vy[current] = 0;
+    if (isLooseSettleLocked(current)) return;
+
     if (updateLoosePackContact(current)) {
       setCell(current, PACKED);
       return;
@@ -259,6 +262,7 @@ export function createDirtSimulation({
     state.cells[to] = fromKind;
     packedStress.markCellChanged(to, toKind, fromKind);
     state.ages[to] = state.ages[from];
+    state.looseSettleLocks[to] = state.looseSettleLocks[from];
     state.damage[to] = state.damage[from];
     state.stress[to] = state.stress[from];
     state.visualStress[to] = state.visualStress[from];
@@ -309,6 +313,32 @@ export function createDirtSimulation({
     const x = i % state.width;
     const y = Math.floor(i / state.width);
     return y === state.height - 1 || isSolidForDirt(index(x, y + 1));
+  }
+
+  function isLooseSettleLocked(i) {
+    const lock = state.looseSettleLocks[i] ?? 0;
+    if (lock <= 0) return false;
+    if (isNearRigidInfluence(i, LOOSE_SETTLE_LOCK_NEAR_RIGID_RADIUS)) return true;
+    state.looseSettleLocks[i] = lock - 1;
+    return state.looseSettleLocks[i] > 0;
+  }
+
+  function isNearRigidInfluence(i, radius) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    const radiusSq = radius * radius;
+
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx * dx + dy * dy > radiusSq) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        if (state.rigid[index(nx, ny)] !== 0) return true;
+      }
+    }
+
+    return false;
   }
 
   function hasPackedNeighbor(i) {
