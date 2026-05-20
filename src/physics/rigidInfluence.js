@@ -3,9 +3,9 @@ import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
 
 const ROLLER_MIN_LINEAR_SPEED = 0.08;
 const ROLLER_WINDOW_HALF_WIDTH = 10;
-const ROLLER_WINDOW_HALF_HEIGHT = 1;
+const ROLLER_WINDOW_HALF_HEIGHT = 3;
 const ROLLER_MAX_START_HORIZONTAL_DISTANCE = 3;
-const ROLLER_MAX_MOVES_PER_STEP = 1;
+const ROLLER_MAX_MOVES_PER_STEP = 3;
 const ROLLER_CHAIN_MAX_PATH_LENGTH = 16;
 const ROLLER_CHAIN_RESISTANCE = 0.16;
 const ROLLER_PRESSURE_WEIGHT = 1;
@@ -14,7 +14,10 @@ const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
 const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
 const ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS = 3;
-const ROLLER_JAGGED_SURFACE_PENALTY = 1;
+const ROLLER_JAGGED_SURFACE_FILLED_NEIGHBORS = 3;
+const ROLLER_JAGGED_SURFACE_PENALTY = 5;
+const ROLLER_ORPHAN_SCAN_HEIGHT = 16;
+const ROLLER_ORPHAN_SCAN_HORIZONTAL_HALO = 1;
 const CARDINAL_OFFSETS = [
   [0, -1],
   [-1, 0],
@@ -290,9 +293,11 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     for (const cell of candidates) {
       const target = findRollerSettleTarget(cell, contact, flow);
       if (target >= 0) {
-        moveDirtCell(cell.i, target);
-        state.vx[target] = Math.sign(target % state.width - cell.x);
-        state.vy[target] = Math.sign(Math.floor(target / state.width) - cell.y);
+        const touchedCells = [cell.i, target];
+        const moved = moveDirtCell(cell.i, target);
+        state.vx[moved] = Math.sign(moved % state.width - cell.x);
+        state.vy[moved] = Math.sign(Math.floor(moved / state.width) - cell.y);
+        cleanupRollerOrphanedPackedCells(touchedCells);
         return true;
       }
 
@@ -367,7 +372,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
       for (let i = 0; i < manifold.pointCount; i++) {
         const point = worldToCellPoint(manifold.points[i]);
         const separation = manifold.separations?.[i] ?? 0;
-        if (best && separation >= best.separation) continue;
+        if (best && point.y >= best.point.y) continue;
         best = {
           point,
           normal,
@@ -562,8 +567,12 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     let jaggedCount = 0;
 
     for (const i of checkCells) {
-      if (getRollerFinalKind(i, finalKinds) !== PACKED) continue;
-      if (countEmptyCardinalNeighbors(i, finalKinds) === ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS) jaggedCount++;
+      const kind = getRollerFinalKind(i, finalKinds);
+      if (kind === PACKED && countEmptyCardinalNeighbors(i, finalKinds) === ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS) {
+        jaggedCount++;
+      } else if (kind === EMPTY && countFilledCardinalNeighbors(i, finalKinds) === ROLLER_JAGGED_SURFACE_FILLED_NEIGHBORS) {
+        jaggedCount++;
+      }
     }
 
     return jaggedCount * ROLLER_JAGGED_SURFACE_PENALTY;
@@ -617,24 +626,95 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     return emptyNeighbors;
   }
 
+  function countFilledCardinalNeighbors(i, finalKinds) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    let filledNeighbors = 0;
+
+    for (const [dx, dy] of CARDINAL_OFFSETS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (getRollerFinalKind(index(nx, ny), finalKinds) !== EMPTY) filledNeighbors++;
+    }
+
+    return filledNeighbors;
+  }
+
   function getRollerFinalKind(i, finalKinds) {
     return finalKinds.get(i) ?? state.cells[i];
   }
 
   function shiftRollerSettleChain(path) {
+    const touchedCells = [...path];
+
     for (let p = path.length - 2; p >= 0; p--) {
       const from = path[p];
       const to = path[p + 1];
       const fromX = from % state.width;
       const fromY = Math.floor(from / state.width);
-      moveDirtCell(from, to);
-      state.vx[to] = Math.sign(to % state.width - fromX);
-      state.vy[to] = Math.sign(Math.floor(to / state.width) - fromY);
+      const moved = moveDirtCell(from, to);
+      state.vx[moved] = Math.sign(moved % state.width - fromX);
+      state.vy[moved] = Math.sign(Math.floor(moved / state.width) - fromY);
     }
+
+    cleanupRollerOrphanedPackedCells(touchedCells);
   }
 
   function isRollerMovableDirt(i) {
     return state.cells[i] === PACKED || state.cells[i] === LOOSE;
+  }
+
+  function cleanupRollerOrphanedPackedCells(touchedCells) {
+    const candidates = collectRollerOrphanCheckCells(touchedCells);
+
+    for (const i of candidates) {
+      if (state.cells[i] !== PACKED) continue;
+      if (hasCardinalDirtNeighbor(i)) continue;
+      setCell(i, LOOSE);
+      state.vx[i] = 0;
+      state.vy[i] = 1;
+      state.touched[i] = state.tick;
+    }
+  }
+
+  function collectRollerOrphanCheckCells(touchedCells) {
+    const seen = new Set();
+    const cells = [];
+
+    for (const touched of touchedCells) {
+      const x = touched % state.width;
+      const y = Math.floor(touched / state.width);
+      const minX = Math.max(0, x - ROLLER_ORPHAN_SCAN_HORIZONTAL_HALO);
+      const maxX = Math.min(state.width - 1, x + ROLLER_ORPHAN_SCAN_HORIZONTAL_HALO);
+      const minY = Math.max(0, y - ROLLER_ORPHAN_SCAN_HEIGHT);
+      const maxY = Math.min(state.height - 1, y + ROLLER_ORPHAN_SCAN_HEIGHT);
+
+      for (let yy = maxY; yy >= minY; yy--) {
+        for (let xx = minX; xx <= maxX; xx++) {
+          const i = index(xx, yy);
+          if (seen.has(i)) continue;
+          seen.add(i);
+          cells.push(i);
+        }
+      }
+    }
+
+    return cells;
+  }
+
+  function hasCardinalDirtNeighbor(i) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+
+    for (const [dx, dy] of CARDINAL_OFFSETS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (state.cells[index(nx, ny)] !== EMPTY) return true;
+    }
+
+    return false;
   }
 
   function moveDirtCell(from, to) {
@@ -665,6 +745,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     state.vy[to] = vy;
     clearCell(from, false);
     state.touched[to] = state.tick;
+    return to;
   }
 
   function findPackedContactCells(body) {
