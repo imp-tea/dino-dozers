@@ -2,8 +2,8 @@ import { Vec2 } from "planck";
 import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
 
 const ROLLER_MIN_LINEAR_SPEED = 0.08;
-const ROLLER_WINDOW_HALF_WIDTH = 12;
-const ROLLER_WINDOW_HALF_HEIGHT = 2;
+const ROLLER_WINDOW_HALF_WIDTH = 10;
+const ROLLER_WINDOW_HALF_HEIGHT = 1;
 const ROLLER_MAX_START_HORIZONTAL_DISTANCE = 3;
 const ROLLER_MAX_MOVES_PER_STEP = 1;
 const ROLLER_CHAIN_MAX_PATH_LENGTH = 16;
@@ -14,8 +14,7 @@ const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
 const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
 const ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS = 3;
-const ROLLER_JAGGED_SURFACE_PENALTY = 0.7;
-const ROLLER_LOOSE_SETTLE_LOCK_TICKS = 18;
+const ROLLER_JAGGED_SURFACE_PENALTY = 1;
 const CARDINAL_OFFSETS = [
   [0, -1],
   [-1, 0],
@@ -573,8 +572,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
   function rollerFinalKindsForPath(path) {
     const finalKinds = new Map([[path[0], EMPTY]]);
     for (let p = 1; p < path.length; p++) {
-      const fromKind = state.cells[path[p - 1]];
-      finalKinds.set(path[p], fromKind === PACKED ? LOOSE : fromKind);
+      finalKinds.set(path[p], state.cells[path[p - 1]]);
     }
     return finalKinds;
   }
@@ -641,20 +639,19 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
 
   function moveDirtCell(from, to) {
     const kind = state.cells[from];
-    const targetKind = kind === PACKED ? LOOSE : kind;
     const ages = state.ages[from];
-    const looseContactAges = kind === PACKED ? 0 : state.looseContactAges[from];
-    const looseSettleLock = kind === PACKED ? ROLLER_LOOSE_SETTLE_LOCK_TICKS : state.looseSettleLocks[from];
-    const damage = targetKind === PACKED ? state.damage[from] : 0;
-    const stress = targetKind === PACKED ? state.stress[from] : 0;
-    const visualStress = targetKind === PACKED ? state.visualStress[from] : 0;
-    const stressVisibility = targetKind === PACKED ? state.stressVisibility[from] : 0;
+    const looseContactAges = kind === LOOSE ? state.looseContactAges[from] : 0;
+    const looseSettleLock = kind === LOOSE ? state.looseSettleLocks[from] : 0;
+    const damage = kind === PACKED ? state.damage[from] : 0;
+    const stress = kind === PACKED ? state.stress[from] : 0;
+    const visualStress = kind === PACKED ? state.visualStress[from] : 0;
+    const stressVisibility = kind === PACKED ? state.stressVisibility[from] : 0;
     const visualX = state.visualX[from];
     const visualY = state.visualY[from];
     const vx = state.vx[from];
     const vy = state.vy[from];
 
-    setCell(to, targetKind);
+    setCell(to, kind);
     state.ages[to] = ages;
     state.looseContactAges[to] = looseContactAges;
     state.looseSettleLocks[to] = looseSettleLock;
