@@ -1,5 +1,6 @@
 import { Vec2, World } from "planck";
 import { createRigidInfluence } from "./physics/rigidInfluence.js";
+import { createPlaygroundProps } from "./physics/playgroundProps.js";
 import { createPhysicsTerrain } from "./physics/terrain.js";
 import { createInputState } from "./input/inputState.js";
 import { createCamera } from "./render/camera.js";
@@ -79,6 +80,10 @@ const physicsWorld = new World({
   gravity: Vec2(0, 32),
 });
 const vehicleManager = createVehicleManager();
+const playgroundProps = createPlaygroundProps({
+  world: physicsWorld,
+  cellsPerWorldUnit: CELLS_PER_WORLD_UNIT,
+});
 setActiveVehicleType(activeVehicleType);
 
 const state = createGridState({
@@ -283,6 +288,7 @@ function seedWorld() {
       setCell(index(x, y), PACKED);
     }
   }
+  playgroundProps.reset(state);
   stressVisibilityDirty = true;
 }
 
@@ -298,6 +304,15 @@ function updateRigidInfluenceGrid() {
     affectsTerrain: true,
     distributeLoadToContacts: true,
     contactPart: "wheel",
+  });
+  rigidInfluence.registerBodyGroup({
+    id: "playground-props",
+    kind: "props",
+    bodies: playgroundProps.getBodies(),
+    dynamic: true,
+    massScale: 0.45,
+    damageScale: 0.35,
+    affectsTerrain: true,
   });
   rigidInfluence.update();
 }
@@ -330,6 +345,7 @@ function render(delta = 0) {
   camera.applyTransform(ctx);
   dirtRenderer.drawPackedContourFill(packedContours, cellW, cellH, visibleBounds);
   dirtRenderer.drawCells({ cellW, cellH, dirtTween, visibleBounds });
+  drawPlaygroundProps(worldCellW, worldCellH);
   drawActiveVehicle(worldCellW, worldCellH);
   if (controls.debugView.checked) {
     drawPlanckDebugView(ctx, physicsWorld, { cellW: worldCellW, cellH: worldCellH });
@@ -476,7 +492,10 @@ function stepPhysics(delta) {
   let iterations = 0;
   while (physicsAccumulator >= PHYSICS_STEP_SECONDS && iterations < 5) {
     vehicleManager.step(PHYSICS_STEP_SECONDS);
-    rigidInfluence.capturePreStepMotion(vehicleManager.getActiveVehicleBodies());
+    rigidInfluence.capturePreStepMotion([
+      ...vehicleManager.getActiveVehicleBodies(),
+      ...playgroundProps.getBodies(),
+    ]);
     physicsWorld.step(PHYSICS_STEP_SECONDS, 8, 3);
     vehicleManager.afterPhysicsStep(PHYSICS_STEP_SECONDS);
     physicsAccumulator -= PHYSICS_STEP_SECONDS;
@@ -490,6 +509,10 @@ function stepPhysics(delta) {
 
 function drawActiveVehicle(cellW, cellH) {
   vehicleManager.draw(ctx, { cellW, cellH });
+}
+
+function drawPlaygroundProps(cellW, cellH) {
+  playgroundProps.draw(ctx, { cellW, cellH });
 }
 
 let pointerCell = null;
