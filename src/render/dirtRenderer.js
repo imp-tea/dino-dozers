@@ -105,8 +105,6 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
     }
   }
 
-  function drawPackedContourOverlay() {}
-
   function drawBrushPreview(pointerCell, forEachBrushCell, cellW, cellH) {
     if (!pointerCell) return;
 
@@ -180,7 +178,6 @@ export function createDirtRenderer({ state, grid, controls, ctx, statsElement, s
   return {
     drawCells,
     drawPackedContourFill,
-    drawPackedContourOverlay,
     drawBrushPreview,
     updateStats,
   };

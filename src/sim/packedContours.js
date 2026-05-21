@@ -1,6 +1,6 @@
 import { EMPTY, PACKED } from "./cellTypes.js";
 
-const CONTOUR_REBUILD_INTERVAL_TICKS = 8;
+const CONTOUR_REBUILD_INTERVAL_TICKS = 32;
 
 export function createPackedContourCache({ state, grid }) {
   const { index, inBounds } = grid;

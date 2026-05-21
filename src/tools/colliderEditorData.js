@@ -99,7 +99,6 @@ function createRollersaurusModel() {
 function createWreckersaurusModel() {
   const wheelRadius = wreckersaurusSvg.wheel.viewBox.width * WRECKERSAURUS_ART_SCALE * 0.5;
   const wheelSpacing = wheelRadius * 2;
-  const headLength = (wreckersaurusSvg.headTop.viewBox.width - wreckersaurusSvg.headTop.pivot.x - 18) * WRECKERSAURUS_HEAD_JAW_ART_SCALE;
   const boomLength = svgDistance(wreckersaurusSvg.boom.pivot, wreckersaurusSvg.boom.end) * WRECKERSAURUS_ART_SCALE;
   const stickLength = svgDistance(wreckersaurusSvg.stick.pivot, wreckersaurusSvg.stick.end) * WRECKERSAURUS_ART_SCALE;
 

@@ -286,8 +286,8 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       0.18,
       "stick",
     );
-    const headTopBody = createHeadBody(chassis, initialPoints.wrist, initialPoints.headAbs, facing, headLength);
-    const jawBottomBody = createJawBody(chassis, initialPoints.wrist, initialPoints.headAbs + arm.targetPose.jawAngle, facing, headLength);
+    const headTopBody = createHeadBody(chassis, initialPoints.wrist, initialPoints.headAbs, facing);
+    const jawBottomBody = createJawBody(chassis, initialPoints.wrist, initialPoints.headAbs + arm.targetPose.jawAngle, facing);
   
     arm.bodies = {
       boom: boomBody,
@@ -432,7 +432,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     return body;
   }
 
-  function createHeadBody(chassis, wristLocal, angleLocal, facing, headLength) {
+  function createHeadBody(chassis, wristLocal, angleLocal, facing) {
     const body = physicsWorld.createDynamicBody({
       position: chassis.getWorldPoint(wristLocal),
       angle: chassis.getAngle() + angleLocal,
@@ -447,17 +447,17 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       terrainLoadScale: 1.35,
     });
     body.createFixture({
-      shape: Polygon(getHeadTopLocalVertices(headLength, facing)),
+      shape: Polygon(getHeadTopLocalVertices(facing)),
       density: 0.035,
       friction: 0.92,
       restitution: 0.01,
       filterGroupIndex: WRECKERSAURUS_COLLISION_GROUP,
     });
-    createMouthToothFixture(body, getUpperMouthToothVertices(headLength), facing);
+    createMouthToothFixture(body, getUpperMouthToothVertices(), facing);
     return body;
   }
 
-  function createJawBody(chassis, wristLocal, angleLocal, facing, headLength) {
+  function createJawBody(chassis, wristLocal, angleLocal, facing) {
     const body = physicsWorld.createDynamicBody({
       position: chassis.getWorldPoint(wristLocal),
       angle: chassis.getAngle() + angleLocal,
@@ -472,17 +472,17 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       terrainLoadScale: 1.55,
     });
     body.createFixture({
-      shape: Polygon(getJawBottomLocalVertices(headLength, facing)),
+      shape: Polygon(getJawBottomLocalVertices(facing)),
       density: 0.03,
       friction: 0.95,
       restitution: 0.01,
       filterGroupIndex: WRECKERSAURUS_COLLISION_GROUP,
     });
-    createMouthToothFixture(body, getLowerMouthToothVertices(headLength), facing);
+    createMouthToothFixture(body, getLowerMouthToothVertices(), facing);
     return body;
   }
 
-  function getHeadTopLocalVertices(length, facing = WRECKERSAURUS_FACING_RIGHT) {
+  function getHeadTopLocalVertices(facing = WRECKERSAURUS_FACING_RIGHT) {
     return mirrorDirtVertices([
       Vec2(-0.4141, -0.2131),
       Vec2(0.3313, 2.8319),
@@ -493,7 +493,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     ], facing);
   }
 
-  function getJawBottomLocalVertices(length, facing = WRECKERSAURUS_FACING_RIGHT) {
+  function getJawBottomLocalVertices(facing = WRECKERSAURUS_FACING_RIGHT) {
     return mirrorDirtVertices([
       Vec2(0.212, -0.9951),
       Vec2(2.191, -0.8663),
@@ -504,7 +504,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     ], facing);
   }
 
-  function getUpperMouthToothVertices(length) {
+  function getUpperMouthToothVertices() {
     return [
       Vec2(1.9856, -0.4858),
       Vec2(8.1119, -0.4676),
@@ -513,7 +513,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     ];
   }
 
-  function getLowerMouthToothVertices(length) {
+  function getLowerMouthToothVertices() {
     return [
       Vec2(2.688, -1.2621),
       Vec2(2.688, -0.8479),
@@ -954,7 +954,7 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
         tail.releaseTimer = WRECKERSAURUS_TAIL_RELEASE_DURATION;
         tail.downswingTimer = WRECKERSAURUS_TAIL_DOWNSWING_DURATION;
         tail.releaseCharge = tail.raiseBlend;
-        const impulse = -WRECKERSAURUS_TAIL_DOWNSWING_IMPULSE * tail.releaseCharge;
+        const impulse = -WRECKERSAURUS_TAIL_DOWNSWING_IMPULSE * tail.releaseCharge * tail.facing;
         tail.body.applyAngularImpulse(impulse, true);
         tail.chassis.applyAngularImpulse(-impulse * WRECKERSAURUS_TAIL_DOWNSWING_REACTION_SCALE, true);
       }
@@ -988,7 +988,8 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
     const downswingTorque = -WRECKERSAURUS_TAIL_DOWNSWING_TORQUE
       * tail.releaseCharge
       * downswingAmount
-      * downswingAmount;
+      * downswingAmount
+      * tail.facing;
     const springTorque = torque;
     const totalTorque = clamp(
       springTorque + downswingTorque,

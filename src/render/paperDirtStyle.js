@@ -1,6 +1,5 @@
 const PAPER_TILE_SIZE = 96;
 const PAPER_TEXTURE_ALPHA = 0.24;
-const PACKED_OUTLINE = "rgba(55, 32, 20, 0.62)";
 const PACKED_SHADOW = "rgba(48, 29, 19, 0.22)";
 const PACKED_HIGHLIGHT = "rgba(255, 220, 154, 0.18)";
 const LOOSE_OUTLINE = "rgba(74, 44, 20, 0.5)";
@@ -209,14 +208,6 @@ export function drawDamageTear(ctx, x, y, cellW, cellH, damage) {
   traceTear(ctx, startX, startY, angle, segments, step, x + 17, y + 5);
   ctx.stroke();
   ctx.restore();
-}
-
-export function strokePackedPaperEdge(ctx, cellW, cellH) {
-  ctx.globalAlpha = 0.95;
-  ctx.strokeStyle = PACKED_OUTLINE;
-  ctx.lineWidth = Math.max(1.5, Math.min(cellW, cellH) * 0.7);
-  ctx.lineJoin = "bevel";
-  ctx.lineCap = "butt";
 }
 
 function traceTear(ctx, startX, startY, angle, segments, step, sx, sy) {

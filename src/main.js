@@ -328,7 +328,6 @@ function render(delta = 0) {
   camera.applyTransform(ctx);
   dirtRenderer.drawPackedContourFill(packedContours, cellW, cellH, visibleBounds);
   dirtRenderer.drawCells({ cellW, cellH, dirtTween, visibleBounds });
-  dirtRenderer.drawPackedContourOverlay(packedContours, cellW, cellH);
   drawActiveVehicle(worldCellW, worldCellH);
   if (controls.debugView.checked) {
     drawPlanckDebugView(ctx, physicsWorld, { cellW: worldCellW, cellH: worldCellH });

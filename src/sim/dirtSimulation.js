@@ -448,6 +448,7 @@ export function createDirtSimulation({
     let looseLoads = new Float32Array(0);
     let unsupported = new Uint8Array(0);
     let previousUnsupported = new Uint8Array(0);
+    let fineSupported = new Uint8Array(0);
     let dirty = new Uint8Array(0);
     let project = new Uint8Array(0);
     let seenToken = 0;
@@ -466,6 +467,7 @@ export function createDirtSimulation({
     function analyze(settings) {
       resizeIfNeeded();
       updateSettingsProjectState(settings);
+      collapseUnsupportedFinePackedCells();
       refreshCachedModel(settings.weight);
       clearSolveModel();
       buildDynamicModel();
@@ -495,10 +497,53 @@ export function createDirtSimulation({
       looseLoads = new Float32Array(total);
       unsupported = new Uint8Array(total);
       previousUnsupported = new Uint8Array(total);
+      fineSupported = new Uint8Array(state.width * state.height);
       dirty = new Uint8Array(total);
       project = new Uint8Array(total);
       seenToken = 0;
       markAllDirty();
+    }
+
+    function collapseUnsupportedFinePackedCells() {
+      const fineTotal = state.width * state.height;
+      if (fineSupported.length !== fineTotal) fineSupported = new Uint8Array(fineTotal);
+      fineSupported.fill(0);
+      queue.length = 0;
+
+      for (let y = 0; y < state.height; y++) {
+        for (let x = 0; x < state.width; x++) {
+          const i = index(x, y);
+          if (state.cells[i] !== PACKED) continue;
+          if (y !== state.height - 1 && !hasRigidSupport(i)) continue;
+          fineSupported[i] = 1;
+          queue.push(i);
+        }
+      }
+
+      for (let head = 0; head < queue.length; head++) {
+        const current = queue[head];
+        const x = current % state.width;
+        const y = Math.floor(current / state.width);
+        addFineSupportNeighbor(x - 1, y);
+        addFineSupportNeighbor(x + 1, y);
+        addFineSupportNeighbor(x, y - 1);
+        addFineSupportNeighbor(x, y + 1);
+      }
+
+      for (let i = 0; i < fineTotal; i++) {
+        if (state.cells[i] !== PACKED || fineSupported[i]) continue;
+        setCell(i, LOOSE);
+        state.vy[i] = 1;
+        state.touched[i] = state.tick;
+      }
+    }
+
+    function addFineSupportNeighbor(x, y) {
+      if (!inBounds(x, y)) return;
+      const i = index(x, y);
+      if (fineSupported[i] || state.cells[i] !== PACKED) return;
+      fineSupported[i] = 1;
+      queue.push(i);
     }
 
     function updateSettingsProjectState(settings) {

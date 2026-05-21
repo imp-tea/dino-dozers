@@ -2,20 +2,20 @@ import { Vec2 } from "planck";
 import { EMPTY, LOOSE, PACKED } from "../sim/cellTypes.js";
 
 const ROLLER_MIN_LINEAR_SPEED = 0.08;
-const ROLLER_WINDOW_HALF_WIDTH = 10;
+const ROLLER_WINDOW_HALF_WIDTH = 16;
 const ROLLER_WINDOW_HALF_HEIGHT = 3;
 const ROLLER_MAX_START_HORIZONTAL_DISTANCE = 3;
 const ROLLER_MAX_MOVES_PER_STEP = 3;
 const ROLLER_CHAIN_MAX_PATH_LENGTH = 16;
 const ROLLER_CHAIN_RESISTANCE = 0.16;
 const ROLLER_PRESSURE_WEIGHT = 1;
-const ROLLER_GRAVITY_WEIGHT = 1;
+const ROLLER_GRAVITY_WEIGHT = 0.5;
 const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
-const ROLLER_ANTI_FLOW_TOLERANCE = 0.02;
+const ROLLER_ANTI_FLOW_TOLERANCE = 0.05;
 const ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS = 3;
 const ROLLER_JAGGED_SURFACE_FILLED_NEIGHBORS = 3;
-const ROLLER_JAGGED_SURFACE_PENALTY = 5;
+const ROLLER_JAGGED_SURFACE_PENALTY = 1000;
 const ROLLER_ORPHAN_SCAN_HEIGHT = 16;
 const ROLLER_ORPHAN_SCAN_HORIZONTAL_HALO = 1;
 const CARDINAL_OFFSETS = [
@@ -31,7 +31,6 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     inBounds,
     setCell,
     clearCell,
-    isEmptyForDirt,
   } = grid;
   const bodyGroups = new Map();
   let rigidVelocityMass = new Float32Array(0);
@@ -63,7 +62,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
         continue;
       }
 
-      const bounds = rollerSettleBounds(contact.point, config.depth);
+      const bounds = rollerSettleBounds(contact.point);
       const velocity = body.getLinearVelocity?.() ?? Vec2(0, 0);
       const angularVelocity = body.getAngularVelocity?.() ?? 0;
       const active = isRollerSettleActive(body, config);
@@ -287,7 +286,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     const contact = findRollerTerrainContact(body);
     if (!contact) return;
 
-    const bounds = rollerSettleBounds(contact.point, config.depth);
+    const bounds = rollerSettleBounds(contact.point, contact.linearVel);
     const flow = rollerSettleFlow(contact, body, config);
 
     let moved = 0;
@@ -393,11 +392,13 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
       for (let i = 0; i < manifold.pointCount; i++) {
         const point = worldToCellPoint(manifold.points[i]);
         const separation = manifold.separations?.[i] ?? 0;
+        const linearVel = body.getLinearVelocity();
         if (best && point.y >= best.point.y) continue;
         best = {
           point,
           normal,
           separation,
+          linearVel,
         };
       }
     }
@@ -411,12 +412,13 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     return fixtureData?.kind === "packed-terrain" || bodyData?.kind === "packed-terrain";
   }
 
-  function rollerSettleBounds(contact, depth) {
+  function rollerSettleBounds(contact, vel=0) {
+    
     return {
       minX: Math.max(0, Math.floor(contact.x) - ROLLER_WINDOW_HALF_WIDTH),
       maxX: Math.min(state.width - 1, Math.floor(contact.x) + ROLLER_WINDOW_HALF_WIDTH),
-      minY: Math.max(0, Math.floor(contact.y) - ROLLER_WINDOW_HALF_HEIGHT),
-      maxY: Math.min(state.height - 1, Math.floor(contact.y) + ROLLER_WINDOW_HALF_HEIGHT),
+      minY: Math.max(0, Math.floor(contact.y) - ROLLER_WINDOW_HALF_HEIGHT * 2),
+      maxY: Math.min(state.height - 1, Math.floor(contact.y) + 1),
     };
   }
 
@@ -437,7 +439,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
           i,
           x,
           y,
-          score: dot(rel, reverseFlow) * 2 - length(rel) * 0.25,
+          score: dot(rel, reverseFlow) * 2 - rel.y,
         });
       }
     }

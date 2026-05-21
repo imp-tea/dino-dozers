@@ -94,15 +94,6 @@ export function createActivityGrid({
     }
   }
 
-  function activeTileCount() {
-    if (!activeUntil.length) return 0;
-    let count = 0;
-    for (let i = 0; i < activeUntil.length; i++) {
-      if (isActiveTileIndex(i)) count++;
-    }
-    return count;
-  }
-
   function getTiles() {
     if (!activeUntil.length) resize();
     return {
@@ -123,7 +114,6 @@ export function createActivityGrid({
     wakeAll,
     isCellActive,
     forEachActiveTileBounds,
-    activeTileCount,
     getTiles,
   };
 }
