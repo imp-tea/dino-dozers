@@ -153,6 +153,7 @@ const rigidInfluence = createRigidInfluence({
   grid,
   cellsPerWorldUnit: CELLS_PER_WORLD_UNIT,
   applyTerrainEffects: (markRigidTouchedCell) => dirtSimulation.applyRigidTerrainEffects(markRigidTouchedCell),
+  markLooseCollisionDisabled: dirtSimulation.markLooseCollisionDisabled,
 });
 
 function markStatsDirty() {
@@ -257,6 +258,7 @@ function seedWorld() {
   state.ages.fill(0);
   state.looseContactAges.fill(0);
   state.looseSettleLocks.fill(0);
+  state.looseCollisionSkips.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);
@@ -474,6 +476,7 @@ function stepPhysics(delta) {
   let iterations = 0;
   while (physicsAccumulator >= PHYSICS_STEP_SECONDS && iterations < 5) {
     vehicleManager.step(PHYSICS_STEP_SECONDS);
+    rigidInfluence.capturePreStepMotion(vehicleManager.getActiveVehicleBodies());
     physicsWorld.step(PHYSICS_STEP_SECONDS, 8, 3);
     vehicleManager.afterPhysicsStep(PHYSICS_STEP_SECONDS);
     physicsAccumulator -= PHYSICS_STEP_SECONDS;
@@ -670,6 +673,7 @@ clearButton.addEventListener("click", () => {
   state.ages.fill(0);
   state.looseContactAges.fill(0);
   state.looseSettleLocks.fill(0);
+  state.looseCollisionSkips.fill(0);
   state.damage.fill(0);
   state.stress.fill(0);
   state.visualStress.fill(0);

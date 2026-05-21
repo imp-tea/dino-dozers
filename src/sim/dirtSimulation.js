@@ -6,7 +6,20 @@ const RIGID_BREAK_SPEED = 6;
 const RIGID_BREAK_DAMAGE = 0.0225;
 const RIGID_PRESSURE_BREAK_MASS = 0.08;
 const RIGID_PRESSURE_BREAK_DAMAGE = 0.1;
-const RIGID_LOOSE_KICK = 0.45;
+const RIGID_LOOSE_KICK = 0.78;
+const LOOSE_GRAVITY = 0.34;
+const LOOSE_AIR_DRAG = 0.982;
+const LOOSE_SURFACE_FRICTION = 0.72;
+const LOOSE_RESTITUTION = 0.28;
+const LOOSE_MIN_SPEED = 0.05;
+const LOOSE_MAX_SPEED = 14;
+const LOOSE_MAX_SWEEP_STEPS = 14;
+const LOOSE_RIGID_CARRY = 0.22;
+const LOOSE_RIGID_IMPACT = 0.46;
+const LOOSE_RIGID_RESTITUTION = 0.5;
+const LOOSE_RIGID_NEAR_SPEED = 0.14;
+const LOOSE_RIGID_CARRY_LOCK_TICKS = 8;
+const LOOSE_MELT_COLLISION_SKIP_TICKS = 5;
 const RIGID_FRACTURE_OFFSETS = [
   [0, 0],
   [-1, 0],
@@ -171,8 +184,8 @@ export function createDirtSimulation({
       if (state.damage[i] < 1 && impact < 0.35) continue;
 
       setCell(i, LOOSE);
-      state.vx[i] = clampVelocity(vx * RIGID_LOOSE_KICK);
-      state.vy[i] = clampVelocity(Math.max(0, vy * RIGID_LOOSE_KICK));
+      state.vx[i] = clampVelocity(vx * RIGID_LOOSE_KICK + dx * Math.max(0.5, impact * 1.8));
+      state.vy[i] = clampVelocity(vy * RIGID_LOOSE_KICK + dy * Math.max(0.5, impact * 1.8) - Math.max(0, impact - 0.35) * 0.8);
       state.touched[i] = state.tick;
     }
   }
@@ -199,9 +212,14 @@ export function createDirtSimulation({
   function updateLooseCell(start, settings) {
     if (state.cells[start] !== LOOSE) return;
     state.touched[start] = state.tick;
-    if (state.rigid[start] && !isLooseSettleLocked(start) && pushLooseOutOfRigid(start) !== start) return;
+    const collisionsDisabled = updateLooseCollisionSkip(start);
+    if (state.cells[start] !== LOOSE) return;
+    if (!collisionsDisabled) {
+      transferRigidMotionToLoose(start);
+      if (state.rigid[start] && !isLooseSettleLocked(start) && pushLooseOutOfRigid(start) !== start) return;
+    }
 
-    const moved = tryFallingSandMove(start, settings);
+    const moved = tryParticleMove(start, settings);
     const current = moved >= 0 ? moved : start;
     if (current < 0 || state.cells[current] !== LOOSE) return;
 
@@ -210,8 +228,10 @@ export function createDirtSimulation({
       return;
     }
 
-    state.vx[current] = 0;
-    state.vy[current] = 0;
+    state.vx[current] *= LOOSE_SURFACE_FRICTION;
+    state.vy[current] = Math.min(0, state.vy[current] * LOOSE_RESTITUTION);
+    if (Math.abs(state.vx[current]) < LOOSE_MIN_SPEED) state.vx[current] = 0;
+    if (Math.abs(state.vy[current]) < LOOSE_MIN_SPEED) state.vy[current] = 0;
     if (isLooseSettleLocked(current)) return;
 
     if (updateLoosePackContact(current)) {
@@ -225,6 +245,110 @@ export function createDirtSimulation({
     if (state.ages[current] >= settings.settleTicks && canLooseCellPack(current)) {
       setCell(current, PACKED);
     }
+  }
+
+  function tryParticleMove(i, settings) {
+    state.vy[i] = clampVelocity(state.vy[i] + LOOSE_GRAVITY);
+    state.vx[i] = clampVelocity(state.vx[i] * LOOSE_AIR_DRAG);
+    state.vy[i] = clampVelocity(state.vy[i] * LOOSE_AIR_DRAG);
+
+    const speed = Math.max(Math.abs(state.vx[i]), Math.abs(state.vy[i]));
+    if (speed < 0.5) return tryFallingSandMove(i, settings);
+
+    const swept = trySweepLooseMove(i);
+    if (swept !== i) return swept;
+
+    return tryFallingSandMove(i, settings);
+  }
+
+  function trySweepLooseMove(start) {
+    let current = start;
+    let currentX = current % state.width;
+    let currentY = Math.floor(current / state.width);
+    const vx = state.vx[current];
+    const vy = state.vy[current];
+    const steps = Math.min(LOOSE_MAX_SWEEP_STEPS, Math.max(1, Math.ceil(Math.max(Math.abs(vx), Math.abs(vy)))));
+
+    for (let step = 1; step <= steps; step++) {
+      if (state.cells[current] !== LOOSE) return current;
+      const targetX = Math.round((start % state.width) + (vx * step) / steps);
+      const targetY = Math.round(Math.floor(start / state.width) + (vy * step) / steps);
+      if (targetX === currentX && targetY === currentY) continue;
+      if (!inBounds(targetX, targetY) || !isCellActive(targetX, targetY)) {
+        collideLooseAtBoundary(current, targetX, targetY);
+        return current;
+      }
+
+      const target = index(targetX, targetY);
+      if (isEmptyForDirt(target)) {
+        current = moveLoose(current, target);
+        currentX = targetX;
+        currentY = targetY;
+        continue;
+      }
+
+      const slid = trySlideLooseAlongCollision(current, currentX, currentY, targetX, targetY, state.cells[target]);
+      if (slid === current) {
+        collideLooseWithCell(current, target, targetX - currentX, targetY - currentY);
+        return current;
+      }
+
+      current = slid;
+      currentX = current % state.width;
+      currentY = Math.floor(current / state.width);
+    }
+
+    return current;
+  }
+
+  function trySlideLooseAlongCollision(i, x, y, targetX, targetY, targetKind) {
+    const dx = Math.sign(targetX - x);
+    const dy = Math.sign(targetY - y);
+    const horizontal = dx !== 0 ? tryMoveLooseTo(i, x + dx, y) : -1;
+    if (horizontal >= 0) {
+      if (targetKind === LOOSE) {
+        state.vy[horizontal] *= LOOSE_SURFACE_FRICTION;
+        state.vx[horizontal] *= LOOSE_SURFACE_FRICTION;
+      } else {
+        state.vy[horizontal] *= -LOOSE_RESTITUTION;
+        state.vx[horizontal] *= 0.88;
+      }
+      return horizontal;
+    }
+
+    const vertical = dy !== 0 ? tryMoveLooseTo(i, x, y + dy) : -1;
+    if (vertical >= 0) {
+      if (targetKind === LOOSE) {
+        state.vx[vertical] *= LOOSE_SURFACE_FRICTION;
+        state.vy[vertical] *= LOOSE_SURFACE_FRICTION;
+      } else {
+        state.vx[vertical] *= -LOOSE_RESTITUTION;
+        state.vy[vertical] *= 0.88;
+      }
+      return vertical;
+    }
+
+    return i;
+  }
+
+  function collideLooseAtBoundary(i, targetX, targetY) {
+    if (targetX < 0 || targetX >= state.width) state.vx[i] *= -LOOSE_RESTITUTION;
+    if (targetY < 0 || targetY >= state.height) state.vy[i] *= -LOOSE_RESTITUTION;
+    state.vx[i] = clampVelocity(state.vx[i] * LOOSE_SURFACE_FRICTION);
+    state.vy[i] = clampVelocity(state.vy[i] * LOOSE_SURFACE_FRICTION);
+  }
+
+  function collideLooseWithCell(i, target, dx, dy) {
+    if (state.cells[target] === LOOSE) {
+      state.vx[i] = clampVelocity(state.vx[i] * LOOSE_SURFACE_FRICTION);
+      state.vy[i] = clampVelocity(Math.min(state.vy[i], 0) * LOOSE_RESTITUTION);
+      return;
+    }
+
+    if (dx !== 0) state.vx[i] *= -LOOSE_RESTITUTION;
+    if (dy !== 0) state.vy[i] *= -LOOSE_RESTITUTION;
+    state.vx[i] = clampVelocity(state.vx[i] + ((state.tick + i) % 3 - 1) * 0.08);
+    state.vy[i] = clampVelocity(state.vy[i]);
   }
 
   function tryFallingSandMove(i, settings) {
@@ -269,6 +393,7 @@ export function createDirtSimulation({
     packedStress.markCellChanged(to, toKind, fromKind);
     state.ages[to] = state.ages[from];
     state.looseSettleLocks[to] = state.looseSettleLocks[from];
+    state.looseCollisionSkips[to] = state.looseCollisionSkips[from];
     state.damage[to] = state.damage[from];
     state.stress[to] = state.stress[from];
     state.visualStress[to] = state.visualStress[from];
@@ -285,7 +410,75 @@ export function createDirtSimulation({
   }
 
   function clampVelocity(value) {
-    return Math.max(-8, Math.min(8, Math.trunc(value)));
+    if (Math.abs(value) < LOOSE_MIN_SPEED) return 0;
+    return Math.max(-LOOSE_MAX_SPEED, Math.min(LOOSE_MAX_SPEED, value));
+  }
+
+  function transferRigidMotionToLoose(i) {
+    const x = i % state.width;
+    const y = Math.floor(i / state.width);
+    let rigidVx = 0;
+    let rigidVy = 0;
+    let weight = 0;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const neighbor = index(nx, ny);
+        if (!state.rigid[neighbor]) continue;
+        const contactWeight = dy > 0 ? 1 : 0.45;
+        rigidVx += state.rigidVx[neighbor] * contactWeight;
+        rigidVy += state.rigidVy[neighbor] * contactWeight;
+        weight += contactWeight;
+      }
+    }
+
+    if (state.rigid[i]) {
+      rigidVx += state.rigidVx[i] * 1.4;
+      rigidVy += state.rigidVy[i] * 1.4;
+      weight += 1.4;
+    }
+
+    if (weight <= 0) return;
+    rigidVx /= weight;
+    rigidVy /= weight;
+    const speed = Math.hypot(rigidVx, rigidVy);
+    if (speed < LOOSE_RIGID_NEAR_SPEED) return;
+
+    const impulse = state.rigid[i] ? LOOSE_RIGID_IMPACT : LOOSE_RIGID_CARRY;
+    state.vx[i] = clampVelocity(state.vx[i] + rigidVx * impulse * LOOSE_RIGID_RESTITUTION);
+    state.vy[i] = clampVelocity(state.vy[i] + rigidVy * impulse * LOOSE_RIGID_RESTITUTION);
+    state.looseSettleLocks[i] = Math.max(state.looseSettleLocks[i], LOOSE_RIGID_CARRY_LOCK_TICKS);
+    activityGrid?.wakeIndex(i, 1, LOOSE_RIGID_CARRY_LOCK_TICKS);
+  }
+
+  function updateLooseCollisionSkip(i) {
+    const skip = state.looseCollisionSkips[i] ?? 0;
+    if (skip <= 0) return false;
+
+    state.looseCollisionSkips[i] = skip - 1;
+    if (state.looseCollisionSkips[i] > 0) {
+      state.vy[i] = clampVelocity((state.vy[i] + LOOSE_GRAVITY) * LOOSE_AIR_DRAG);
+      state.vx[i] = clampVelocity(state.vx[i] * LOOSE_AIR_DRAG);
+      activityGrid?.wakeIndex(i, 1, state.looseCollisionSkips[i] + 1);
+      return true;
+    }
+
+    if (state.rigid[i]) {
+      clearCell(i);
+      return true;
+    }
+
+    return false;
+  }
+
+  function markLooseCollisionDisabled(i, ticks = LOOSE_MELT_COLLISION_SKIP_TICKS) {
+    if (state.cells[i] !== LOOSE) return;
+    state.looseCollisionSkips[i] = Math.max(state.looseCollisionSkips[i] ?? 0, ticks);
+    activityGrid?.wakeIndex(i, 1, ticks + 1);
   }
 
   function pushLooseOutOfRigid(i) {
@@ -307,8 +500,8 @@ export function createDirtSimulation({
       const target = index(nx, ny);
       if (!isEmptyForDirt(target)) continue;
       const moved = moveLoose(i, target);
-      state.vx[moved] = clampVelocity(state.rigidVx[i] * 0.4);
-      state.vy[moved] = clampVelocity(state.rigidVy[i] * 0.4);
+      state.vx[moved] = clampVelocity(state.rigidVx[i] * 0.4 * LOOSE_RIGID_RESTITUTION);
+      state.vy[moved] = clampVelocity(state.rigidVy[i] * 0.4 * LOOSE_RIGID_RESTITUTION);
       return moved;
     }
 
@@ -972,6 +1165,7 @@ export function createDirtSimulation({
     updateLoose,
     analyzePackedClusters,
     applyRigidTerrainEffects,
+    markLooseCollisionDisabled,
     markStressCellChanged,
     resetStressModel,
   };

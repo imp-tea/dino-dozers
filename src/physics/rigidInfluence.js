@@ -5,19 +5,20 @@ const ROLLER_MIN_LINEAR_SPEED = 0.08;
 const ROLLER_WINDOW_HALF_WIDTH = 16;
 const ROLLER_WINDOW_HALF_HEIGHT = 3;
 const ROLLER_MAX_START_HORIZONTAL_DISTANCE = 3;
-const ROLLER_MAX_MOVES_PER_STEP = 3;
+const ROLLER_MAX_MOVES_PER_STEP = 2;
 const ROLLER_CHAIN_MAX_PATH_LENGTH = 16;
 const ROLLER_CHAIN_RESISTANCE = 0.16;
 const ROLLER_PRESSURE_WEIGHT = 1;
-const ROLLER_GRAVITY_WEIGHT = 0.5;
+const ROLLER_GRAVITY_WEIGHT = 0.75;
 const ROLLER_OUTWARD_WEIGHT = 0.25;
 const ROLLER_OUTWARD_EPSILON = 0.001;
 const ROLLER_ANTI_FLOW_TOLERANCE = 0.05;
 const ROLLER_JAGGED_SURFACE_EMPTY_NEIGHBORS = 3;
 const ROLLER_JAGGED_SURFACE_FILLED_NEIGHBORS = 3;
-const ROLLER_JAGGED_SURFACE_PENALTY = 1000;
+const ROLLER_JAGGED_SURFACE_PENALTY = 10;
 const ROLLER_ORPHAN_SCAN_HEIGHT = 16;
 const ROLLER_ORPHAN_SCAN_HORIZONTAL_HALO = 1;
+const PACKED_MELT_PROBE_REACH_CELLS = 3;
 const CARDINAL_OFFSETS = [
   [0, -1],
   [-1, 0],
@@ -25,7 +26,13 @@ const CARDINAL_OFFSETS = [
   [0, 1],
 ];
 
-export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, applyTerrainEffects = () => {} }) {
+export function createRigidInfluence({
+  state,
+  grid,
+  cellsPerWorldUnit = 1,
+  applyTerrainEffects = () => {},
+  markLooseCollisionDisabled = () => {},
+}) {
   const {
     index,
     inBounds,
@@ -36,6 +43,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
   let rigidVelocityMass = new Float32Array(0);
   let rigidTouchedFlags = new Uint8Array(0);
   const rigidTouchedCells = [];
+  const preStepMotion = new WeakMap();
 
   function clearBodyGroups() {
     bodyGroups.clear();
@@ -118,6 +126,21 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
       distributeLoadToContacts,
       contactPart,
     });
+  }
+
+  function capturePreStepMotion(bodies = []) {
+    for (const body of bodies) {
+      if (!body) continue;
+      const velocity = body.getLinearVelocity?.() ?? Vec2(0, 0);
+      const center = body.getWorldCenter?.() ?? body.getPosition?.() ?? Vec2(0, 0);
+      preStepMotion.set(body, {
+        vx: velocity.x,
+        vy: velocity.y,
+        angularVelocity: body.getAngularVelocity?.() ?? 0,
+        cx: center.x,
+        cy: center.y,
+      });
+    }
   }
 
   function update() {
@@ -245,8 +268,8 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     const userData = fixture.getUserData?.();
     if (userData?.packedMeltActive !== true) return null;
     return {
-      angularSlowdown: Math.max(0, userData.packedMeltAngularSlowdown ?? 0),
       contactRadiusScale: Math.max(0, userData.packedMeltContactRadiusScale ?? 0.85),
+      onHit: typeof userData.packedMeltOnHit === "function" ? userData.packedMeltOnHit : null,
     };
   }
 
@@ -745,6 +768,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     const ages = state.ages[from];
     const looseContactAges = kind === LOOSE ? state.looseContactAges[from] : 0;
     const looseSettleLock = kind === LOOSE ? state.looseSettleLocks[from] : 0;
+    const looseCollisionSkip = kind === LOOSE ? state.looseCollisionSkips[from] : 0;
     const damage = kind === PACKED ? state.damage[from] : 0;
     const stress = kind === PACKED ? state.stress[from] : 0;
     const visualStress = kind === PACKED ? state.visualStress[from] : 0;
@@ -758,6 +782,7 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     state.ages[to] = ages;
     state.looseContactAges[to] = looseContactAges;
     state.looseSettleLocks[to] = looseSettleLock;
+    state.looseCollisionSkips[to] = looseCollisionSkip;
     state.damage[to] = damage;
     state.stress[to] = stress;
     state.visualStress[to] = visualStress;
@@ -845,7 +870,8 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
   }
 
   function rasterizeRigidCircleShape(body, shape, massShare, terrainMassShare, impactMassShare, fixture = null) {
-    const center = worldToCellPoint(shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition());
+    const centerWorld = shape.m_p ? body.getWorldPoint(shape.m_p) : body.getPosition();
+    const center = worldToCellPoint(centerWorld);
     const radius = shape.m_radius * cellsPerWorldUnit;
 
     const minX = Math.max(0, Math.floor(center.x - radius - 1));
@@ -871,15 +897,68 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     }
 
     if (packedMelt) {
-      const contactRadius = Math.max(1, radius * packedMelt.contactRadiusScale);
-      for (const contact of collectTerrainContactsForFixture(body, fixture)) {
+      const contacts = collectTerrainContactsForFixture(body, fixture);
+      if (!contacts.length) {
+        contacts.push(...collectPackedMeltProbeContactsForCircle(body, centerWorld, center, radius, packedMelt));
+      }
+
+      for (const contact of contacts) {
+        const contactSpeed = Math.max(
+          getBodyPointSpeed(body, contact.worldPoint),
+          getCachedBodyPointSpeed(body, contact.worldPoint),
+        );
+        const contactRadius = Math.max(1, radius * packedMelt.contactRadiusScale * contactSpeed);
         meltedCells += meltPackedCellsNearPoint(contact.point, contactRadius, body);
       }
     }
 
-    if (meltedCells > 0 && packedMelt.angularSlowdown > 0) {
-      slowAngularVelocity(body, packedMelt.angularSlowdown * meltedCells);
+    if (meltedCells > 0) packedMelt.onHit?.({ body, meltedCells });
+  }
+
+  function collectPackedMeltProbeContactsForCircle(body, centerWorld, center, radius, packedMelt) {
+    const centerSpeed = Math.max(
+      getBodyPointSpeed(body, centerWorld),
+      getCachedBodyPointSpeed(body, centerWorld),
+    );
+    if (centerSpeed <= 0.001) return [];
+
+    const centerVelocity = getBodyPointVelocity(body, centerWorld);
+    const direction = normalize(centerVelocity);
+    const reach = radius + PACKED_MELT_PROBE_REACH_CELLS;
+    const minX = Math.max(0, Math.floor(center.x - reach));
+    const maxX = Math.min(state.width - 1, Math.ceil(center.x + reach));
+    const minY = Math.max(0, Math.floor(center.y - reach));
+    const maxY = Math.min(state.height - 1, Math.ceil(center.y + reach));
+    let best = null;
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const i = index(x, y);
+        if (state.cells[i] !== PACKED) continue;
+
+        const rel = {
+          x: x + 0.5 - center.x,
+          y: y + 0.5 - center.y,
+        };
+        const distance = Math.hypot(rel.x, rel.y);
+        if (distance > reach) continue;
+
+        const ahead = rel.x * direction.x + rel.y * direction.y;
+        if (ahead < -radius * 0.35) continue;
+
+        const boundaryDistance = Math.abs(distance - radius);
+        const score = ahead * 2 - boundaryDistance;
+        if (!best || score > best.score) {
+          best = {
+            point: { x: x + 0.5, y: y + 0.5 },
+            worldPoint: cellToWorldPoint(x + 0.5, y + 0.5),
+            score,
+          };
+        }
+      }
     }
+
+    return best ? [best] : [];
   }
 
   function collectTerrainContactsForFixture(body, fixture) {
@@ -901,8 +980,10 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
       const manifold = contact.getWorldManifold?.(null);
       if (!manifold?.pointCount) continue;
       for (let i = 0; i < manifold.pointCount; i++) {
+        const worldPoint = manifold.points[i];
         contacts.push({
-          point: worldToCellPoint(manifold.points[i]),
+          point: worldToCellPoint(worldPoint),
+          worldPoint,
         });
       }
     }
@@ -934,20 +1015,12 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     const i = index(x, y);
     if (state.cells[i] !== PACKED) return false;
     setCell(i, LOOSE);
-    const velocity = body.getLinearVelocityFromWorldPoint(cellToWorldPoint(x + 0.5, y + 0.5));
-    state.vx[i] = Math.trunc(velocity.x * cellsPerWorldUnit);
-    state.vy[i] = Math.trunc(Math.max(0, velocity.y * cellsPerWorldUnit));
+    const velocity = getBodyPointVelocity(body, cellToWorldPoint(x + 0.5, y + 0.5));
+    state.vx[i] = velocity.x * cellsPerWorldUnit;
+    state.vy[i] = velocity.y * cellsPerWorldUnit;
+    markLooseCollisionDisabled(i);
     state.touched[i] = state.tick;
     return true;
-  }
-
-  function slowAngularVelocity(body, amount) {
-    const velocity = body.getAngularVelocity?.() ?? 0;
-    if (velocity > 0) {
-      body.setAngularVelocity(Math.max(0, velocity - amount));
-    } else if (velocity < 0) {
-      body.setAngularVelocity(Math.min(0, velocity + amount));
-    }
   }
 
   function polygonBounds(vertices, padding = 0) {
@@ -1037,9 +1110,32 @@ export function createRigidInfluence({ state, grid, cellsPerWorldUnit = 1, apply
     return Vec2(x / cellsPerWorldUnit, y / cellsPerWorldUnit);
   }
 
+  function getBodyPointVelocity(body, worldPoint) {
+    const snapshot = preStepMotion.get(body);
+    if (!snapshot) return body.getLinearVelocityFromWorldPoint(worldPoint);
+
+    const rx = worldPoint.x - snapshot.cx;
+    const ry = worldPoint.y - snapshot.cy;
+    return Vec2(
+      snapshot.vx - snapshot.angularVelocity * ry,
+      snapshot.vy + snapshot.angularVelocity * rx,
+    );
+  }
+
+  function getBodyPointSpeed(body, worldPoint) {
+    const velocity = body.getLinearVelocityFromWorldPoint(worldPoint);
+    return Math.hypot(velocity.x, velocity.y);
+  }
+
+  function getCachedBodyPointSpeed(body, worldPoint) {
+    const velocity = getBodyPointVelocity(body, worldPoint);
+    return Math.hypot(velocity.x, velocity.y);
+  }
+
   return {
     clearBodyGroups,
     registerBodyGroup,
+    capturePreStepMotion,
     update,
     logRollerTerrainDebug,
   };

@@ -10,6 +10,7 @@ export function createGridState({ width, height }) {
     ages: null,
     looseContactAges: null,
     looseSettleLocks: null,
+    looseCollisionSkips: null,
     damage: null,
     stress: null,
     visualStress: null,
@@ -59,6 +60,7 @@ export function createGrid(state, callbacks = {}) {
     state.ages = new Uint16Array(total);
     state.looseContactAges = new Uint16Array(total);
     state.looseSettleLocks = new Uint16Array(total);
+    state.looseCollisionSkips = new Uint8Array(total);
     state.damage = new Float32Array(total);
     state.stress = new Float32Array(total);
     state.visualStress = new Float32Array(total);
@@ -71,8 +73,8 @@ export function createGrid(state, callbacks = {}) {
     state.rigidMass = new Float32Array(total);
     state.rigidImpactMass = new Float32Array(total);
     state.externalLoad = new Float32Array(total);
-    state.vx = new Int16Array(total);
-    state.vy = new Int16Array(total);
+    state.vx = new Float32Array(total);
+    state.vy = new Float32Array(total);
     state.touched = new Uint32Array(total);
     state.clusterSeen = new Uint32Array(total);
     state.clusterSeenToken = 0;
@@ -135,6 +137,7 @@ export function createGrid(state, callbacks = {}) {
     state.ages[i] = 0;
     state.looseContactAges[i] = 0;
     state.looseSettleLocks[i] = 0;
+    state.looseCollisionSkips[i] = 0;
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;
@@ -156,6 +159,7 @@ export function createGrid(state, callbacks = {}) {
     state.ages[i] = 0;
     state.looseContactAges[i] = 0;
     state.looseSettleLocks[i] = 0;
+    state.looseCollisionSkips[i] = 0;
     state.damage[i] = 0;
     state.stress[i] = 0;
     state.visualStress[i] = 0;

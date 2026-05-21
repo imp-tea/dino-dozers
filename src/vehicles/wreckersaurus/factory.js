@@ -43,7 +43,6 @@ import {
   WRECKERSAURUS_TAIL_DOWNSWING_TORQUE,
   WRECKERSAURUS_TAIL_LENGTH,
   WRECKERSAURUS_TAIL_MAX_TORQUE,
-  WRECKERSAURUS_TAIL_PACKED_MELT_ANGULAR_SLOWDOWN,
   WRECKERSAURUS_TAIL_PACKED_MELT_CONTACT_RADIUS_SCALE,
   WRECKERSAURUS_TAIL_RAISED_ANGLE,
   WRECKERSAURUS_TAIL_RAISED_DAMPING,
@@ -380,8 +379,8 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       terrainDamageScale: 1.45,
       terrainLoadScale: 1.25,
       packedMeltActive: false,
-      packedMeltAngularSlowdown: WRECKERSAURUS_TAIL_PACKED_MELT_ANGULAR_SLOWDOWN,
       packedMeltContactRadiusScale: WRECKERSAURUS_TAIL_PACKED_MELT_CONTACT_RADIUS_SCALE,
+      packedMeltOnHit: () => recoverTailAfterPackedMeltHit(ballFixture),
     });
     const lowerAngle = facing === WRECKERSAURUS_FACING_RIGHT ? -0.06 : -1.5;
     const upperAngle = facing === WRECKERSAURUS_FACING_RIGHT ? 1.62 : -0.06;
@@ -1001,6 +1000,19 @@ export function createWreckersaurusVehicle({ world, ctx, input }) {
       -springTorque - downswingTorque * WRECKERSAURUS_TAIL_DOWNSWING_REACTION_SCALE,
       true,
     );
+  }
+
+  function recoverTailAfterPackedMeltHit(ballFixture) {
+    const tail = activeVehicle?.tail;
+    if (!tail || tail.ballFixture !== ballFixture) return;
+    if (tail.releaseTimer <= 0 && tail.downswingTimer <= 0) return;
+
+    tail.releaseTimer = 0;
+    tail.downswingTimer = 0;
+    tail.releaseCharge = 0;
+
+    const ballData = tail.ballFixture.getUserData?.();
+    if (ballData) ballData.packedMeltActive = false;
   }
 
   function pollJoypad() {
